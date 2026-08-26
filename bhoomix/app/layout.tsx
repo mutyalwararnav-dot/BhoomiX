@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Inter, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import Link from 'next/link';
+
 // ─── Fonts ────────────────────────────────────────────────────────────────────
 const inter = Inter({
   variable:  '--font-inter',
@@ -47,7 +48,7 @@ export default function RootLayout({
             bg-header-gradient shadow-bhoomix-sm z-30">
 
             {/* Brand */}
-            <Link href="/" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
+            <a href="/" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
               <div className="flex items-center justify-center w-8 h-8 rounded-lg
                 bg-bhoomix-primary shadow-bhoomix-glow">
                 <svg viewBox="0 0 24 24" fill="none" className="w-5 h-5 text-white">
@@ -66,7 +67,7 @@ export default function RootLayout({
                   AI Cadastral Mapping
                 </div>
               </div>
-            </Link>
+            </a>
 
             {/* Center: Status bar */}
             <div className="hidden md:flex items-center gap-2 text-xs text-bhoomix-subtext">
@@ -80,14 +81,14 @@ export default function RootLayout({
 
             {/* Right: Actions */}
             <div className="flex items-center gap-2">
-              <Link
+              <a
                 href="/upload"
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold
                   text-white bg-indigo-600 rounded-md shadow-bhoomix-sm
                   hover:bg-indigo-500 transition-all duration-150"
               >
-                Upload Drone Data
-              </Link>
+                UPLOAD TEST
+              </a>
               <button
                 id="btn-seed-hint"
                 className="hidden md:flex items-center gap-1.5 px-3 py-1.5 text-xs

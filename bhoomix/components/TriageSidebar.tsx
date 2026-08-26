@@ -5,11 +5,11 @@ import { supabase, type ParcelFeature } from '@/lib/supabase';
 import { Crosshair } from 'lucide-react';
 
 interface TriageSidebarProps {
-  onFlyTo: (parcel: ParcelFeature) => void;
-  refreshTrigger: number;
+  onFlyTo?: (parcel: ParcelFeature) => void; // Made optional for safety
+  refreshTrigger?: number; // Made optional so the page doesn't crash if missing
 }
 
-export default function TriageSidebar({ onFlyTo, refreshTrigger }: TriageSidebarProps) {
+export default function TriageSidebar({ onFlyTo, refreshTrigger = 0 }: TriageSidebarProps) {
   const [parcels, setParcels] = useState<ParcelFeature[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -21,7 +21,6 @@ export default function TriageSidebar({ onFlyTo, refreshTrigger }: TriageSidebar
         console.error('[BhoomiX] Sidebar fetch error:', error.message);
       } else if (data) {
         const fc = data as GeoJSON.FeatureCollection<GeoJSON.Polygon>;
-        // Filter only those that need triage
         const triageParcels = (fc.features as ParcelFeature[]).filter(
           (f) => f.properties.status === 'ai_suggestion' || f.properties.status === 'conflict'
         );
@@ -91,7 +90,7 @@ export default function TriageSidebar({ onFlyTo, refreshTrigger }: TriageSidebar
   );
 }
 
-function ParcelCard({ parcel, onFlyTo }: { parcel: ParcelFeature; onFlyTo: (parcel: ParcelFeature) => void }) {
+function ParcelCard({ parcel, onFlyTo }: { parcel: ParcelFeature; onFlyTo?: (parcel: ParcelFeature) => void }) {
   const { id, confidence_score, status } = parcel.properties;
   
   const isConflict = status === 'conflict';
@@ -115,7 +114,9 @@ function ParcelCard({ parcel, onFlyTo }: { parcel: ParcelFeature; onFlyTo: (parc
           </div>
         </div>
         <button
-          onClick={() => onFlyTo(parcel)}
+          onClick={() => {
+            if (onFlyTo) onFlyTo(parcel); // Safety check added here!
+          }}
           className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2D3748] hover:bg-indigo-600 hover:text-white text-slate-300 text-xs rounded-lg transition-colors font-medium"
         >
           <Crosshair className="w-3.5 h-3.5" />
