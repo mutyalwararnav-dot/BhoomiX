@@ -6,9 +6,17 @@
 -- 1. Update the parcel status constraint to allow 'reviewed_edited'
 ALTER TABLE parcels DROP CONSTRAINT IF EXISTS parcels_status_check;
 ALTER TABLE parcels ADD CONSTRAINT parcels_status_check 
-  CHECK (status IN ('ai_suggestion', 'confirmed', 'conflict', 'pending', 'reviewed_edited'));
+  CHECK (status IN (
+    'ai_suggestion', 'confirmed', 'conflict', 'pending',
+    'reviewed_edited', 'rejected'
+  ));
 
--- 2. Create RPC for updating geometry and auditing
+-- 2. Remove the legacy overload whose parameters were ordered as
+--    (p_changed_by, p_id, p_new_geojson). PostgREST resolves RPCs by named
+--    parameters, so keeping both versions makes every call ambiguous.
+DROP FUNCTION IF EXISTS update_parcel_geometry(TEXT, TEXT, JSONB);
+
+-- 3. Create the single canonical RPC for updating geometry and auditing
 CREATE OR REPLACE FUNCTION update_parcel_geometry(
   p_id TEXT,
   p_new_geojson JSONB,
@@ -65,3 +73,6 @@ $$;
 GRANT EXECUTE ON FUNCTION update_parcel_geometry(TEXT, JSONB, TEXT) TO service_role;
 GRANT EXECUTE ON FUNCTION update_parcel_geometry(TEXT, JSONB, TEXT) TO anon;
 GRANT EXECUTE ON FUNCTION update_parcel_geometry(TEXT, JSONB, TEXT) TO authenticated;
+
+-- Ask PostgREST to discard any cached reference to the removed overload.
+NOTIFY pgrst, 'reload schema';

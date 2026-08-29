@@ -13,7 +13,10 @@ CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE TABLE IF NOT EXISTS parcels (
   id                TEXT PRIMARY KEY,
   status            TEXT NOT NULL DEFAULT 'pending'
-                      CHECK (status IN ('ai_suggestion', 'confirmed', 'conflict', 'pending')),
+                      CHECK (status IN (
+                        'ai_suggestion', 'confirmed', 'conflict', 'pending',
+                        'reviewed_edited', 'rejected'
+                      )),
   confidence_score  NUMERIC(5, 4) CHECK (confidence_score BETWEEN 0 AND 1),
   computed_area_sqm NUMERIC(12, 2),
   land_use          TEXT,

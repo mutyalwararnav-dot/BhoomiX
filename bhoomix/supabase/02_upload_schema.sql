@@ -33,11 +33,13 @@ ON CONFLICT (id) DO NOTHING;
 
 -- 3. Storage Policies
 -- Allow public uploads to drone_datasets (Prototype Only!)
+DROP POLICY IF EXISTS "Allow public uploads to drone_datasets" ON storage.objects;
 CREATE POLICY "Allow public uploads to drone_datasets"
 ON storage.objects FOR INSERT
 TO public
 WITH CHECK (bucket_id = 'drone_datasets');
 
+DROP POLICY IF EXISTS "Allow public select from drone_datasets" ON storage.objects;
 CREATE POLICY "Allow public select from drone_datasets"
 ON storage.objects FOR SELECT
 TO public

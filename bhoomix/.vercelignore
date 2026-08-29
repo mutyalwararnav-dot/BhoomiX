@@ -1,0 +1,8 @@
+.env*
+!.env.example
+training/
+supabase/
+scripts/test_rpc.ts
+BhoomiX_Workflow_and_TechStack.md
+BhoomiX_Workflow_and_TechStack.pdf
+

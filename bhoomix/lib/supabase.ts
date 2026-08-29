@@ -25,7 +25,13 @@ export const supabase = createClient(
 
 // ─── Type Definitions ─────────────────────────────────────────────────────────
 
-export type ParcelStatus = 'ai_suggestion' | 'confirmed' | 'conflict' | 'pending' | 'reviewed_edited';
+export type ParcelStatus =
+  | 'ai_suggestion'
+  | 'confirmed'
+  | 'conflict'
+  | 'pending'
+  | 'reviewed_edited'
+  | 'rejected';
 
 export interface Parcel {
   id: string;
