@@ -11,7 +11,21 @@ type UploadStage = 'idle' | 'validating' | 'uploading' | 'processing' | 'done' |
 interface UploadModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onUploadSuccess?: (parcelCount: number) => void;
+  onUploadSuccess?: (result: UploadSuccessDetails) => void;
+  onViewJobs?: () => void;
+  onOpenAnalysis?: () => void;
+}
+
+export interface UploadSuccessDetails {
+  uploadId: string | null;
+  filename: string;
+  fileKind: 'geojson' | 'imagery';
+  parcelCount: number;
+  imageAnnotationCount?: number;
+  jobId: string | null;
+  processingMode: 'demo' | 'model' | null;
+  isGeoreferenced: boolean;
+  sourceFile: File | null;
 }
 
 // ─── File validation ────────────────────────────────────────────────────────────
@@ -40,11 +54,12 @@ function formatBytes(bytes: number): string {
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────────
-export default function UploadModal({ isOpen, onClose, onUploadSuccess }: UploadModalProps) {
+export default function UploadModal({ isOpen, onClose, onUploadSuccess, onViewJobs, onOpenAnalysis }: UploadModalProps) {
   const [stage, setStage]           = useState<UploadStage>('idle');
   const [errorMsg, setErrorMsg]     = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [parcelCount, setParcelCount]   = useState(0);
+  const [imageAnnotationCount, setImageAnnotationCount] = useState(0);
   const [isDragging, setIsDragging]     = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [fileKind, setFileKind] = useState<'geojson' | 'imagery'>('geojson');
@@ -57,6 +72,7 @@ export default function UploadModal({ isOpen, onClose, onUploadSuccess }: Upload
     setErrorMsg('');
     setSelectedFile(null);
     setParcelCount(0);
+    setImageAnnotationCount(0);
     setUploadProgress(0);
     setFileKind('geojson');
     setJobId(null);
@@ -91,7 +107,9 @@ export default function UploadModal({ isOpen, onClose, onUploadSuccess }: Upload
       setStage('uploading');
       try {
         type ImageryResult = {
+          uploadId?: string;
           parcelCount?: number;
+          imageAnnotationCount?: number;
           jobId?: string;
           processingMode?: 'demo' | 'model';
           processingNotice?: string | null;
@@ -105,19 +123,30 @@ export default function UploadModal({ isOpen, onClose, onUploadSuccess }: Upload
 
         const insertedCount = result.parcelCount ?? 0;
         setParcelCount(insertedCount);
+        setImageAnnotationCount(result.imageAnnotationCount ?? 0);
         setJobId(result.jobId ?? null);
         if (result.processingMode === 'demo') {
           const locationNotice = result.georeferencing?.isGeoreferenced
             ? ` The image footprint was located${result.georeferencing.sourceCrs ? ` using ${result.georeferencing.sourceCrs}` : ''}.`
             : ` ${result.georeferencing?.warning || 'The image cannot be placed accurately on the map.'}`;
-          setCompletionNotice(`${result.processingNotice || 'Demo polygons are simulated and are not detections from the uploaded image.'}${locationNotice}`);
+          setCompletionNotice(`${result.processingNotice || 'No automatic boundaries were created because a trained model is not connected.'}${locationNotice}`);
         } else if (result.georeferencing?.isGeoreferenced) {
           setCompletionNotice(`Image located on the map${result.georeferencing.sourceCrs ? ` using ${result.georeferencing.sourceCrs}` : ''}.`);
         } else {
           setCompletionNotice(result.georeferencing?.warning || 'Image processed, but it cannot be placed accurately on the map.');
         }
         setStage('done');
-        onUploadSuccess?.(insertedCount);
+        onUploadSuccess?.({
+          uploadId: result.uploadId ?? null,
+          filename: file.name,
+          fileKind: 'imagery',
+          parcelCount: insertedCount,
+          imageAnnotationCount: result.imageAnnotationCount ?? 0,
+          jobId: result.jobId ?? null,
+          processingMode: result.processingMode ?? null,
+          isGeoreferenced: result.georeferencing?.isGeoreferenced === true,
+          sourceFile: file,
+        });
       } catch (err: unknown) {
         setErrorMsg(err instanceof Error ? err.message : 'Image processing failed.');
         setStage('error');
@@ -159,8 +188,19 @@ export default function UploadModal({ isOpen, onClose, onUploadSuccess }: Upload
       const insertedCount = result.parcelCount ?? 0;
 
       setParcelCount(insertedCount);
+      setImageAnnotationCount(0);
       setStage('done');
-      onUploadSuccess?.(insertedCount);
+      onUploadSuccess?.({
+        uploadId: null,
+        filename: file.name,
+        fileKind: 'geojson',
+        parcelCount: insertedCount,
+        imageAnnotationCount: 0,
+        jobId: null,
+        processingMode: null,
+        isGeoreferenced: false,
+        sourceFile: null,
+      });
       window.setTimeout(handleClose, 800);
     } catch (err: unknown) {
       console.error('[UploadModal] processing error:', err);
@@ -263,13 +303,22 @@ export default function UploadModal({ isOpen, onClose, onUploadSuccess }: Upload
 
       case 'done':
         return (
-          <div className="flex flex-col items-center justify-center h-52 bg-emerald-900/20 border border-emerald-500/30 rounded-xl text-center">
+          <div className="flex min-h-52 flex-col items-center justify-center rounded-xl border border-emerald-500/30 bg-emerald-900/20 px-4 py-5 text-center">
             <div className="w-14 h-14 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mb-3">
               <CheckCircle className="w-8 h-8 text-emerald-500" />
             </div>
-            <p className="text-emerald-400 font-bold text-lg">Extraction Complete!</p>
+            <p className="text-emerald-400 font-bold text-lg">
+              {fileKind === 'imagery' && completionNotice?.includes('Demo') ? 'Demo Processing Complete' : 'Processing Complete'}
+            </p>
+            {selectedFile && (
+              <p className="mt-1 max-w-full truncate text-sm font-semibold text-slate-200" title={selectedFile.name}>
+                {selectedFile.name}
+              </p>
+            )}
             <p className="text-slate-400 text-sm mt-1">
-              {parcelCount} AI parcel{parcelCount !== 1 ? 's' : ''} generated and added to the Triage Queue.
+              {fileKind === 'imagery'
+                ? `${parcelCount + imageAnnotationCount} model boundar${parcelCount + imageAnnotationCount === 1 ? 'y' : 'ies'} ready for review.`
+                : `${parcelCount} parcel${parcelCount === 1 ? '' : 's'} added to the Triage Queue.`}
             </p>
             {jobId && <p className="mt-2 font-mono text-[10px] text-slate-500">Job {jobId.slice(0, 8)} completed</p>}
             {completionNotice && <p className="mt-2 max-w-sm text-xs text-amber-300">{completionNotice}</p>}
@@ -301,6 +350,9 @@ export default function UploadModal({ isOpen, onClose, onUploadSuccess }: Upload
     >
       {/* ── Panel ────────────────────────────────────────────────────────── */}
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Upload survey data"
         className="relative w-full max-w-lg mx-4 bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-6"
         onClick={e => e.stopPropagation()} 
       >
@@ -326,7 +378,7 @@ export default function UploadModal({ isOpen, onClose, onUploadSuccess }: Upload
         {/* Footer actions */}
         <div className="mt-5 flex items-center justify-between">
           {stage === 'done' ? (
-            <>
+            <div className="flex w-full flex-wrap items-center justify-between gap-2">
               <button
                 onClick={reset}
                 className="px-4 py-2 text-sm bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition-colors"
@@ -334,13 +386,21 @@ export default function UploadModal({ isOpen, onClose, onUploadSuccess }: Upload
                 Upload Another
               </button>
               <button
-                onClick={handleClose}
+                onClick={() => {
+                  handleClose();
+                  if (fileKind === 'imagery') onOpenAnalysis?.();
+                }}
                 className="flex items-center gap-2 px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold transition-colors"
               >
-                Go to Triage Queue
+                {fileKind === 'imagery' ? 'Open Image Analysis' : 'Go to Triage Queue'}
                 <ArrowRight className="w-4 h-4" />
               </button>
-            </>
+              {fileKind === 'imagery' && onViewJobs && (
+                <button type="button" onClick={() => { handleClose(); onViewJobs(); }} className="w-full text-center text-xs font-semibold text-slate-400 hover:text-slate-200">
+                  View upload job details
+                </button>
+              )}
+            </div>
           ) : (
             <div className="flex gap-3 ml-auto">
               <button

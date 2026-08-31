@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseServer as supabase } from '@/lib/supabase-server';
 import { resolveRequestPrincipal } from '@/lib/request-actor';
-import { internalServerError, serverConfigurationError } from '@/lib/request-safety';
+import { internalServerError, mutationRequestError, rateLimitRequest, serverConfigurationError } from '@/lib/request-safety';
 
 // GET /api/feedback/export
 //
@@ -48,6 +48,12 @@ function geoJsonResponse(featureCollection: GeoJSON.FeatureCollection<GeoJSON.Ge
 async function handleExport(request: Request) {
   const configurationError = serverConfigurationError();
   if (configurationError) return configurationError;
+  if (request.method === 'POST') {
+    const originError = mutationRequestError(request);
+    if (originError) return originError;
+  }
+  const limited = rateLimitRequest(request, { bucket: 'feedback-export', limit: 10, windowMs: 60_000 });
+  if (limited) return limited;
   try {
     const principal = await resolveRequestPrincipal(request);
     if (!['admin', 'surveyor'].includes(principal.role)) {

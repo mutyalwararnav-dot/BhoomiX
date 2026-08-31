@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseServer as supabase } from '@/lib/supabase-server';
-import { internalServerError, serverConfigurationError } from '@/lib/request-safety';
+import { internalServerError, rateLimitRequest, serverConfigurationError } from '@/lib/request-safety';
 
 type ActivityAction = 'edited' | 'rejected' | 'confirmed';
 
@@ -14,9 +14,11 @@ interface ActivityRow {
   created_at: string;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const configurationError = serverConfigurationError();
   if (configurationError) return configurationError;
+  const limited = rateLimitRequest(request, { bucket: 'activity-history', limit: 60, windowMs: 60_000 });
+  if (limited) return limited;
   try {
     // Use the deployed SECURITY DEFINER export RPC so public guest users see
     // the same audit dataset as the existing Sync Feedback feature.

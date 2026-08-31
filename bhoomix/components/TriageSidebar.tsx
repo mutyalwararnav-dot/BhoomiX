@@ -124,18 +124,19 @@ export default function TriageSidebar({
   const totalSuggestions = parcels.filter(p => p.properties.status === 'ai_suggestion').length;
 
   return (
-    <div className="w-full h-full bg-[#111827] border-r border-[#2D3748] flex flex-col overflow-hidden shadow-2xl z-20">
-      <div className="p-5 border-b border-[#2D3748] shrink-0 bg-[#0B0F1A]">
+    <div className="bhoomix-queue-shell z-20 flex h-full w-full flex-col overflow-hidden bg-gradient-to-b from-[#101827]/95 to-[#0a101c]/95">
+      <div className="bhoomix-queue-header shrink-0 border-b border-slate-700/55 bg-slate-950/35 p-4 backdrop-blur-xl">
         <div className="flex items-start justify-between">
           <div>
-            <h2 className="text-lg font-bold text-slate-200 tracking-tight">Surveyor Triage</h2>
-            <p className="text-xs text-slate-500 mt-1">Review AI suggestions and resolve conflicts</p>
+            <p className="text-[9px] font-extrabold uppercase tracking-[0.2em] text-indigo-300/80">Survey operations</p>
+            <h2 className="mt-1 text-xl font-extrabold tracking-tight text-white">Review queue</h2>
+            <p className="mt-1 text-[11px] text-slate-500">Validate suggestions and resolve boundary conflicts</p>
           </div>
           <button
             onClick={handleValidate}
             disabled={isValidating}
             title="Run spatial overlap validation now"
-            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#1E2535] hover:bg-indigo-600/20 border border-[#2D3748] hover:border-indigo-500/50 text-slate-400 hover:text-indigo-300 rounded-lg text-xs font-medium transition-colors disabled:opacity-50 mt-0.5 shrink-0"
+            className="mt-0.5 flex shrink-0 items-center gap-1.5 rounded-xl border border-indigo-400/25 bg-indigo-400/10 px-3 py-2 text-[11px] font-bold text-indigo-200 shadow-sm transition hover:border-indigo-400/50 hover:bg-indigo-400/20 disabled:opacity-50"
           >
             {isValidating
               ? <Loader2 className="w-3 h-3 animate-spin" />
@@ -156,7 +157,7 @@ export default function TriageSidebar({
             {validationNotice.message}
           </div>
         )}
-        <div className="mt-4 space-y-2">
+        <div className="mt-4 space-y-2.5">
           <label className="relative block">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
             <input
@@ -164,10 +165,10 @@ export default function TriageSidebar({
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
               placeholder="Search parcel ID or land use"
-              className="w-full rounded-lg border border-[#2D3748] bg-[#111827] py-2 pl-9 pr-3 text-xs text-slate-200 outline-none transition focus:border-indigo-500/60 focus:ring-2 focus:ring-indigo-500/10"
+              className="bhoomix-queue-search w-full rounded-xl border border-slate-700/70 bg-slate-900/75 py-2.5 pl-9 pr-3 text-xs text-slate-200 shadow-inner outline-none transition placeholder:text-slate-600 focus:border-cyan-400/45 focus:ring-2 focus:ring-cyan-400/10"
             />
           </label>
-          <div className="grid grid-cols-3 gap-1 rounded-lg bg-[#111827] p-1">
+          <div className="bhoomix-filter-bar grid grid-cols-3 gap-1 rounded-xl border border-slate-800/80 bg-slate-950/55 p-1">
             {[
               { value: 'all', label: `All ${parcels.length}` },
               { value: 'conflict', label: `Conflicts ${totalConflicts}` },
@@ -177,9 +178,9 @@ export default function TriageSidebar({
                 key={filter.value}
                 type="button"
                 onClick={() => setQueueFilter(filter.value as typeof queueFilter)}
-                className={`rounded-md px-2 py-1.5 text-[10px] font-semibold transition-colors ${
+                className={`rounded-lg px-2 py-1.5 text-[10px] font-bold transition-all ${
                   queueFilter === filter.value
-                    ? 'bg-indigo-600 text-white'
+                    ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-md shadow-indigo-950/40'
                     : 'text-slate-500 hover:bg-slate-800 hover:text-slate-300'
                 }`}
               >
@@ -190,7 +191,7 @@ export default function TriageSidebar({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-6">
+      <div className="bhoomix-queue-scroll flex-1 space-y-6 overflow-y-auto bg-[radial-gradient(circle_at_20%_0%,rgba(99,102,241,0.08),transparent_18rem)] p-4">
         {isLoading ? (
           <div className="flex items-center justify-center h-32">
             <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
@@ -198,9 +199,9 @@ export default function TriageSidebar({
         ) : (
           <>
             {(queueFilter === 'all' || queueFilter === 'conflict') && <div>
-              <div className="flex items-center gap-2 mb-3">
-                <span className="w-2 h-2 rounded-full bg-[#F43F5E]" />
-                <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
+              <div className="mb-3 flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.8)]" />
+                <h3 className="text-[11px] font-bold uppercase tracking-[0.15em] text-slate-300">
                   Conflicts ({conflicts.length})
                 </h3>
               </div>
@@ -223,9 +224,9 @@ export default function TriageSidebar({
             </div>}
 
             {(queueFilter === 'all' || queueFilter === 'ai_suggestion') && <div>
-              <div className="flex items-center gap-2 mb-3">
-                <span className="w-2 h-2 rounded-full bg-[#F59E0B]" />
-                <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
+              <div className="mb-3 flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.75)]" />
+                <h3 className="text-[11px] font-bold uppercase tracking-[0.15em] text-slate-300">
                   AI Suggestions ({aiSuggestions.length})
                 </h3>
               </div>
@@ -310,16 +311,16 @@ function ParcelCard({
 
   return (
     <div
-      className={`bg-[#1E2535] border rounded-xl p-3 shadow-sm transition-all ${
+      className={`bhoomix-parcel-card relative overflow-hidden rounded-2xl border bg-gradient-to-br from-slate-800/90 to-slate-900/95 p-3.5 shadow-lg transition-all duration-200 before:absolute before:inset-y-0 before:left-0 before:w-0.5 ${
         isEditing
-          ? 'border-amber-500/60 shadow-amber-500/10 shadow-md'
+          ? 'border-amber-400/55 shadow-amber-950/30 before:bg-amber-400'
           : isConflict
-            ? 'border-rose-500/40 shadow-rose-500/5 shadow-sm'
-            : 'border-[#2D3748] hover:border-indigo-500/30'
+            ? 'border-rose-500/30 shadow-black/20 before:bg-rose-400 hover:border-rose-400/50'
+            : 'border-slate-700/70 shadow-black/20 before:bg-amber-400 hover:-translate-y-0.5 hover:border-indigo-400/40'
       }`}
     >
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-sm font-mono font-semibold text-slate-200 truncate max-w-[140px]">{id}</span>
+      <div className="mb-2.5 flex items-center justify-between">
+        <span className="max-w-[175px] truncate font-mono text-[13px] font-semibold text-slate-100">{id}</span>
         <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${badgeColors} uppercase tracking-wider`}>
           {isConflict ? 'Conflict' : 'AI'}
         </span>
@@ -353,7 +354,7 @@ function ParcelCard({
         <button
           onClick={() => onFlyTo?.(parcel)}
           title="Fly to parcel on map"
-          className="flex items-center gap-1 px-2 py-1.5 bg-[#2D3748] hover:bg-indigo-600 hover:text-white text-slate-300 text-xs rounded-lg transition-colors font-medium"
+          className="flex items-center gap-1 rounded-lg border border-slate-600/60 bg-slate-700/70 px-2.5 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-indigo-400/50 hover:bg-indigo-500/25 hover:text-white"
         >
           <Crosshair className="w-3 h-3" />
           Fly To

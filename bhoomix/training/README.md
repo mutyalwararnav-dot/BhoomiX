@@ -1,29 +1,49 @@
 # BhoomiX model dataset preparation
 
-The training pipeline needs two things for every reviewed parcel:
+The first rooftop-segmentation baseline is implemented in `rooftop_baseline.py`. See `ROOFTOP_BASELINE_RESULTS.md` for its split, metrics, limitations, and local artifact locations.
 
-1. The source drone image or orthomosaic.
-2. The human-verified parcel geometry linked to that same image.
+BhoomiX supports two reviewed sources for boundary-model training:
 
-Migration `supabase/06_training_dataset_lineage.sql` adds this connection for all new image-processing runs. Historical reviews without a source image remain useful for GIS testing, but should not be used for image-model training.
+1. **Map feedback GeoJSON** — georeferenced parcel confirmations and corrections linked to their source orthomosaic.
+2. **Image annotation JSON** — polygons drawn and approved directly on JPG, PNG, or TIFF imagery in Image Analysis.
 
-## Prepare a dataset
+Untouched demo polygons are excluded automatically. If a reviewer moves a demo vertex, BhoomiX converts that polygon to a manual annotation before saving it.
 
-1. Download the feedback GeoJSON from **Sync Feedback**.
-2. Run:
+## Export reviewed labels
+
+Sign in as a surveyor or administrator, open **Dataset**, and download either:
+
+- `bhoomix_retraining_dataset.geojson` for map-based reviews.
+- `bhoomix_image_annotations.json` for image-space polygons.
+
+The image export contains private Supabase storage paths, not public image URLs. Keep it private and do not commit it.
+
+## Prepare deterministic splits
+
+Run the same command for either export:
 
 ```bash
-npm run dataset:prepare -- bhoomix_retraining_dataset.geojson
+npm run dataset:prepare -- bhoomix_image_annotations.json
 ```
 
-The command produces `training/prepared/manifest.jsonl`, separate train/validation/test manifests, and a quality report. Splitting is performed by source image rather than individual polygon, preventing parcels from the same image leaking across evaluation sets.
+An optional second argument chooses the output directory:
 
-The prepared directory is intentionally ignored by Git because real survey imagery and generated training artifacts may be large or sensitive.
+```bash
+npm run dataset:prepare -- bhoomix_retraining_dataset.geojson training/prepared-map
+```
 
-## Before model training
+The command writes `manifest.jsonl`, `train.jsonl`, `validation.jsonl`, `test.jsonl`, and `report.json`. Splits are deterministic and grouped by source upload, so polygons from one image cannot leak across training, validation, and test sets.
 
-- Prefer georeferenced GeoTIFF orthomosaics so WGS84 parcel polygons can be converted to pixel masks accurately.
-- Verify licensing and permission for every image.
+## Required gates before training
+
+- Run `npm run preflight` and resolve every failure.
+- Run `npm run test:dataset` and `npm run check`.
+- Apply Supabase migrations `00` through `09` in order.
+- In Supabase, enable point-in-time recovery or scheduled database backups appropriate to the project plan and confirm the private `drone_datasets` bucket is included in a separate storage-backup process.
+- Verify ownership, consent, and training rights for every source image.
 - Remove duplicate or near-duplicate flights.
-- Review excluded samples in `report.json`.
-- Do not start the first full training run until the Dataset panel reports sufficient usable samples and reviewer traceability.
+- Review every item listed in the generated `report.json`.
+- Prefer at least 200 usable, reviewer-approved polygons for the first full run. A small pilot may begin at 50 high-quality polygons, but its results are not production evidence.
+- Keep the final test split sealed until model selection is complete.
+
+Image annotation exports require stored image dimensions. Historical uploads created before this pipeline should be re-uploaded if the Dataset panel reports missing dimensions.

@@ -1,21 +1,19 @@
-/* ─── Google Fonts — must be first @import ──────────────────────────────────── */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
-
-
 @import "tailwindcss";
 
 
 /* ─── CSS Custom Properties (Design Tokens) ────────────────────────────────── */
 :root {
+  color-scheme: dark;
   /* Colors */
-  --bhoomix-bg:        #0B0F1A;
-  --bhoomix-surface:   #111827;
-  --bhoomix-surface2:  #1E2535;
-  --bhoomix-border:    #2D3748;
-  --bhoomix-muted:     #4B5563;
-  --bhoomix-text:      #E2E8F0;
-  --bhoomix-subtext:   #94A3B8;
-  --bhoomix-primary:   #6366F1;
+  --bhoomix-bg:        #060912;
+  --bhoomix-surface:   #0d1321;
+  --bhoomix-surface2:  #151d2f;
+  --bhoomix-border:    #26324a;
+  --bhoomix-muted:     #53617a;
+  --bhoomix-text:      #e7edf8;
+  --bhoomix-subtext:   #94a3b8;
+  --bhoomix-primary:   #7c6cff;
+  --bhoomix-cyan:      #22d3ee;
 
   /* Parcel status */
   --parcel-ai:        #F59E0B;
@@ -25,8 +23,21 @@
   --parcel-selected:  #6366F1;
 
   /* Font families */
-  --font-sans: 'Inter', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --font-sans: 'Segoe UI', Aptos, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'Cascadia Code', 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --bhoomix-bg: #eef3f8;
+  --bhoomix-surface: #ffffff;
+  --bhoomix-surface2: #eef2f7;
+  --bhoomix-border: #cbd5e1;
+  --bhoomix-muted: #64748b;
+  --bhoomix-text: #0f1f3d;
+  --bhoomix-subtext: #52617a;
+  --bhoomix-primary: #123a91;
+  --bhoomix-cyan: #087f8c;
 }
 
 /* ─── Base Reset ────────────────────────────────────────────────────────────── */
@@ -38,11 +49,28 @@ html, body {
   margin: 0;
   padding: 0;
   height: 100%;
-  background-color: var(--bhoomix-bg);
+  background:
+    radial-gradient(circle at 82% -10%, rgba(34, 211, 238, 0.10), transparent 32rem),
+    radial-gradient(circle at 10% 10%, rgba(124, 108, 255, 0.12), transparent 30rem),
+    var(--bhoomix-bg);
   color: var(--bhoomix-text);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+button, a, input {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible, a:focus-visible, input:focus-visible {
+  outline: 2px solid rgba(34, 211, 238, 0.8);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: rgba(124, 108, 255, 0.38);
+  color: #ffffff;
 }
 
 /* ─── Scrollbar Styling ─────────────────────────────────────────────────────── */
@@ -137,6 +165,275 @@ html, body {
   border: 1px solid var(--bhoomix-border);
   border-radius: 12px;
   padding: 16px;
+}
+
+.bhoomix-app-shell {
+  background:
+    radial-gradient(circle at 75% 0%, rgba(34, 211, 238, 0.08), transparent 28rem),
+    linear-gradient(145deg, #070b14 0%, #080d18 48%, #0b1020 100%);
+}
+
+.bhoomix-glass {
+  background: linear-gradient(145deg, rgba(17, 25, 42, 0.94), rgba(8, 13, 24, 0.92));
+  border-color: rgba(70, 86, 116, 0.55);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035), 0 18px 48px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(18px);
+}
+
+.bhoomix-topbar {
+  background: linear-gradient(90deg, rgba(8, 13, 25, 0.96), rgba(12, 19, 34, 0.92));
+  border-color: rgba(53, 67, 94, 0.72);
+  box-shadow: 0 12px 32px rgba(1, 5, 14, 0.24);
+  backdrop-filter: blur(20px);
+}
+
+.bhoomix-toolbar-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2.2rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid rgba(68, 83, 111, 0.66);
+  border-radius: 0.7rem;
+  background: linear-gradient(145deg, rgba(30, 41, 59, 0.86), rgba(15, 23, 42, 0.92));
+  color: #cbd5e1;
+  font-size: 0.72rem;
+  font-weight: 650;
+  white-space: nowrap;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 5px 15px rgba(0, 0, 0, 0.16);
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.bhoomix-toolbar-button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(124, 108, 255, 0.58);
+  background: linear-gradient(145deg, rgba(43, 53, 78, 0.96), rgba(22, 30, 51, 0.96));
+  color: #ffffff;
+}
+
+.bhoomix-toolbar-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+  transform: none;
+}
+
+.bhoomix-primary-action {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2.2rem;
+  padding: 0.48rem 0.9rem;
+  border: 1px solid rgba(139, 125, 255, 0.72);
+  border-radius: 0.7rem;
+  background: linear-gradient(135deg, #7657ff 0%, #5f46e8 52%, #2563eb 100%);
+  color: white;
+  font-size: 0.72rem;
+  font-weight: 750;
+  white-space: nowrap;
+  box-shadow: 0 9px 24px rgba(76, 56, 218, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  transition: transform 160ms ease, filter 160ms ease;
+}
+
+.bhoomix-primary-action:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.12);
+}
+
+.bhoomix-map-frame {
+  border: 1px solid rgba(58, 73, 101, 0.72);
+  border-radius: 1.1rem;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 22px 54px rgba(0, 0, 0, 0.34);
+}
+
+.bhoomix-theme-toggle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2.2rem;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid rgba(68, 83, 111, 0.66);
+  border-radius: 0.7rem;
+  background: rgba(15, 23, 42, 0.72);
+  color: #cbd5e1;
+  white-space: nowrap;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.bhoomix-theme-toggle:hover {
+  border-color: rgba(34, 211, 238, 0.48);
+  background: rgba(30, 41, 59, 0.9);
+}
+
+.bhoomix-theme-toggle-track {
+  position: relative;
+  display: inline-flex;
+  width: 2.25rem;
+  height: 1.25rem;
+  align-items: center;
+  border-radius: 999px;
+  background: #26324a;
+  transition: background 180ms ease;
+}
+
+[data-theme="light"] .bhoomix-theme-toggle-track { background: #d7e4fb; }
+
+.bhoomix-theme-toggle-thumb {
+  display: inline-flex;
+  width: 1.05rem;
+  height: 1.05rem;
+  transform: translateX(0.1rem);
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #111827;
+  color: #a5b4fc;
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.34);
+  transition: transform 180ms ease, background 180ms ease, color 180ms ease;
+}
+
+[data-theme="light"] .bhoomix-theme-toggle-thumb {
+  transform: translateX(1.1rem);
+  background: #ffffff;
+  color: #b77907;
+}
+
+.bhoomix-theme-light-content {
+  display: none;
+}
+
+.bhoomix-theme-label {
+  display: none;
+}
+
+[data-theme="light"] .bhoomix-theme-dark-content {
+  display: none;
+}
+
+[data-theme="light"] .bhoomix-theme-light-content:not(.bhoomix-theme-label) {
+  display: inline-flex;
+}
+
+@media (min-width: 640px) {
+  [data-theme="dark"] .bhoomix-theme-dark-content.bhoomix-theme-label,
+  [data-theme="light"] .bhoomix-theme-light-content.bhoomix-theme-label {
+    display: inline-flex;
+  }
+}
+
+[data-theme="light"] body {
+  background:
+    radial-gradient(circle at 78% 0%, rgba(8, 127, 140, 0.09), transparent 30rem),
+    linear-gradient(145deg, #f8fafc, #e8eff7) !important;
+  color: #17233b;
+}
+
+[data-theme="light"] .bhoomix-app-shell {
+  background:
+    linear-gradient(rgba(18, 58, 145, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(18, 58, 145, 0.025) 1px, transparent 1px),
+    #eef3f8;
+  background-size: 32px 32px;
+}
+
+[data-theme="light"] .bhoomix-glass {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(246, 249, 253, 0.97));
+  border-color: #cbd5e1;
+  box-shadow: inset 0 1px 0 #ffffff, 0 16px 42px rgba(23, 43, 77, 0.12);
+}
+
+[data-theme="light"] .bhoomix-topbar {
+  background: rgba(255, 255, 255, 0.96);
+  border-color: #d5dee9;
+  box-shadow: 0 10px 28px rgba(23, 43, 77, 0.09);
+}
+
+[data-theme="light"] .bhoomix-toolbar-button,
+[data-theme="light"] .bhoomix-theme-toggle {
+  border-color: #c9d4e2;
+  background: linear-gradient(145deg, #ffffff, #f2f6fa);
+  color: #243653;
+  box-shadow: inset 0 1px 0 #ffffff, 0 4px 12px rgba(23, 43, 77, 0.08);
+}
+
+[data-theme="light"] .bhoomix-toolbar-button:hover,
+[data-theme="light"] .bhoomix-theme-toggle:hover {
+  border-color: #6c86b4;
+  background: #edf3fb;
+  color: #0b2f78;
+}
+
+[data-theme="light"] .bhoomix-primary-action {
+  border-color: #143c8f;
+  background: linear-gradient(135deg, #123a91, #075f78);
+  box-shadow: 0 9px 22px rgba(18, 58, 145, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+[data-theme="light"] .bhoomix-map-frame {
+  border-color: #bdc9d8;
+  background: #ffffff;
+  box-shadow: 0 20px 45px rgba(23, 43, 77, 0.14);
+}
+
+[data-theme="light"] .bhoomix-queue-shell {
+  background: linear-gradient(180deg, #ffffff, #f5f8fc);
+}
+
+[data-theme="light"] .bhoomix-queue-header {
+  border-color: #d6deea;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+[data-theme="light"] .bhoomix-queue-scroll {
+  background: radial-gradient(circle at 20% 0%, rgba(18, 58, 145, 0.06), transparent 18rem);
+}
+
+[data-theme="light"] .bhoomix-queue-search {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #17233b;
+  box-shadow: inset 0 1px 2px rgba(23, 43, 77, 0.05);
+}
+
+[data-theme="light"] .bhoomix-filter-bar {
+  border-color: #d7e0ea;
+  background: #edf2f7;
+}
+
+[data-theme="light"] .bhoomix-parcel-card {
+  border-color: #cbd5e1;
+  background: linear-gradient(145deg, #ffffff, #f1f5f9);
+  box-shadow: 0 8px 18px rgba(23, 43, 77, 0.08);
+}
+
+[data-theme="light"] .bhoomix-theme-surface .text-white,
+[data-theme="light"] .bhoomix-theme-surface .text-slate-100,
+[data-theme="light"] .bhoomix-theme-surface .text-slate-200,
+[data-theme="light"] .bhoomix-theme-surface .text-slate-300 {
+  color: #17233b !important;
+}
+
+[data-theme="light"] .bhoomix-theme-surface .text-slate-400,
+[data-theme="light"] .bhoomix-theme-surface .text-slate-500,
+[data-theme="light"] .bhoomix-theme-surface .text-slate-600 {
+  color: #64748b !important;
+}
+
+[data-theme="light"] .bhoomix-theme-surface [role="dialog"] {
+  border-color: #cbd5e1 !important;
+  background: #f8fafc !important;
+  color: #17233b;
+  box-shadow: 0 24px 70px rgba(23, 43, 77, 0.2) !important;
+}
+
+[data-theme="light"] .bhoomix-theme-surface [role="dialog"] [class*="bg-slate-950"],
+[data-theme="light"] .bhoomix-theme-surface [role="dialog"] [class*="bg-slate-900"],
+[data-theme="light"] .bhoomix-theme-surface [role="dialog"] [class*="bg-[#0B0F1A]"],
+[data-theme="light"] .bhoomix-theme-surface [role="dialog"] [class*="bg-[#0b1020]"],
+[data-theme="light"] .bhoomix-theme-surface [role="dialog"] [class*="bg-[#111827]"] {
+  background-color: #ffffff !important;
 }
 
 .bhoomix-badge {

@@ -10,6 +10,7 @@ BhoomiX is an AI-assisted cadastral mapping and surveyor-review platform built w
 - Parcel geometry editing, approval, rejection, and conflict validation
 - Reviewer activity history and feedback export
 - Dataset quality and model-training readiness reporting
+- Separate exports for georeferenced parcel reviews and image-space polygon annotations
 - GeoTIFF CRS, bounds, resolution, and WGS84 footprint extraction
 - Imagery upload metadata checks and production request safeguards
 
@@ -31,6 +32,16 @@ npm run build
 npm run start
 ```
 
+Before model training, also run:
+
+```bash
+npm run preflight
+npm run test:dataset
+npm run test:smoke
+```
+
+See `PRETRAINING_CHECKLIST.md` and `training/README.md` for the complete training-data handoff.
+
 After startup, `GET /api/health` should return `{"status":"healthy","database":"connected"}`.
 
 ## Deployment configuration
@@ -48,23 +59,37 @@ When the trained model service is available, configure these server-only variabl
 - `AI_INFERENCE_API_KEY` — optional bearer token for the model service
 - `AI_INFERENCE_TIMEOUT_MS` — optional timeout between 1 and 300 seconds
 
-The model endpoint must accept multipart form data with a `file` field and return:
+The model endpoint must accept multipart form data with a `file` field. For an ordinary JPG/PNG image, return image-space polygons using normalized coordinates (`0` to `1`):
 
 ```json
 {
-  "predictions": [
+  "image_predictions": [
     {
-      "id": "optional-model-id",
-      "geometry": { "type": "Polygon", "coordinates": [] },
-      "confidence_score": 0.92,
-      "computed_area_sqm": 425.5,
-      "land_use": "optional-label"
+      "id": "plot-1",
+      "coordinate_space": "normalized",
+      "points": [[0.10, 0.15], [0.34, 0.14], [0.36, 0.42], [0.11, 0.44]],
+      "confidence_score": 0.92
     }
   ]
 }
 ```
 
-If `AI_INFERENCE_URL` is not set, raw-image uploads remain in clearly identified demo mode. If it is set and the model fails, BhoomiX returns an error instead of silently inserting simulated data.
+For georeferenced results intended for the map, the service may additionally return a `predictions` array containing WGS84 GeoJSON polygons with `confidence_score`, `computed_area_sqm`, and `land_use`. BhoomiX displays exactly the valid boundaries returned by the model; the result count is not hard-coded.
+
+If `AI_INFERENCE_URL` is not set, raw-image uploads enter manual-review mode and BhoomiX creates no automatic polygons. Users can label plots with Add Polygon. If a configured model fails, BhoomiX returns an error instead of silently inserting simulated data.
+
+### Run the local rooftop model
+
+The trained rooftop checkpoint is served locally from the isolated `.venv-ml` environment. Keep these two commands running in separate terminals:
+
+```powershell
+npm run model:serve
+npm run dev
+```
+
+The local `.env.local` points `AI_INFERENCE_URL` to `http://127.0.0.1:8000/predict`. Checkpoint or threshold changes require restarting `model:serve`; inference URL changes require restarting `dev`. Images processed before the model was connected remain manual-mode records and must be uploaded again to receive model predictions.
+
+This experimental checkpoint detects visible rooftop footprints. It does not produce legal cadastral parcel boundaries.
 
 ## Imagery coordinates
 

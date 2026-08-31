@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { validateGeoJsonPolygon } from '@/lib/geometry';
+import { validateImageAnnotations, type ImageAnnotation, type ImageAnnotationPoint } from '@/lib/image-annotations';
 
 const MAX_MODEL_PARCELS = 1000;
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -15,6 +16,7 @@ interface ModelPrediction {
 
 interface ModelResponse {
   predictions?: unknown;
+  image_predictions?: unknown;
 }
 
 export interface InferredParcel {
@@ -24,6 +26,11 @@ export interface InferredParcel {
   computed_area_sqm: number | null;
   land_use: string;
   geometry: GeoJSON.Polygon;
+}
+
+export interface ModelInferenceResult {
+  parcels: InferredParcel[];
+  imageAnnotations: ImageAnnotation[];
 }
 
 function optionalFiniteNumber(value: unknown) {
@@ -67,11 +74,54 @@ function normalizePrediction(value: unknown, index: number, runId: number): Infe
   };
 }
 
+function normalizeImagePrediction(value: unknown, index: number, runId: number): ImageAnnotation {
+  if (!value || typeof value !== 'object') throw new Error(`Image prediction ${index + 1} is not an object.`);
+  const prediction = value as Record<string, unknown>;
+  const rawPoints = Array.isArray(prediction.points)
+    ? prediction.points
+    : Array.isArray(prediction.polygon)
+      ? prediction.polygon
+      : null;
+  if (!rawPoints || rawPoints.length < 3 || rawPoints.length > 100) {
+    throw new Error(`Image prediction ${index + 1} must contain between 3 and 100 polygon points.`);
+  }
+
+  const numericPoints = rawPoints.map((point) => {
+    if (!Array.isArray(point) || point.length < 2) throw new Error(`Image prediction ${index + 1} contains an invalid point.`);
+    const x = Number(point[0]);
+    const y = Number(point[1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error(`Image prediction ${index + 1} contains a non-numeric point.`);
+    return { x, y };
+  });
+  const normalizedSpace = prediction.coordinate_space === 'normalized'
+    || numericPoints.every(({ x, y }) => x >= 0 && x <= 1 && y >= 0 && y <= 1);
+  const points: ImageAnnotationPoint[] = numericPoints.map(({ x, y }) => ({
+    x: normalizedSpace ? x * 1000 : x,
+    y: normalizedSpace ? y * 1000 : y,
+  }));
+  const confidence = optionalFiniteNumber(prediction.confidence_score);
+  const suppliedId = typeof prediction.id === 'string'
+    ? prediction.id.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 80)
+    : '';
+  const annotation: ImageAnnotation = {
+    id: suppliedId || `MODEL-${runId}-${index}`,
+    confidence,
+    points,
+    status: 'pending',
+    source: 'model',
+  };
+  const validation = validateImageAnnotations([annotation]);
+  if (validation.error || !validation.annotations?.[0]) {
+    throw new Error(`Image prediction ${index + 1} is invalid: ${validation.error || 'Unknown annotation error.'}`);
+  }
+  return validation.annotations[0];
+}
+
 export function isModelConfigured() {
   return Boolean(process.env.AI_INFERENCE_URL);
 }
 
-export async function runModelInference(file: File): Promise<InferredParcel[]> {
+export async function runModelInference(file: File): Promise<ModelInferenceResult> {
   const endpoint = process.env.AI_INFERENCE_URL;
   if (!endpoint) throw new Error('AI_INFERENCE_URL is not configured.');
 
@@ -118,16 +168,18 @@ export async function runModelInference(file: File): Promise<InferredParcel[]> {
     throw new Error('AI service returned invalid JSON.');
   }
 
-  if (!Array.isArray(payload.predictions)) {
-    throw new Error('AI service response must contain a predictions array.');
-  }
-  if (payload.predictions.length === 0) {
+  const parcelPredictions = Array.isArray(payload.predictions) ? payload.predictions : [];
+  const imagePredictions = Array.isArray(payload.image_predictions) ? payload.image_predictions : [];
+  if (parcelPredictions.length === 0 && imagePredictions.length === 0) {
     throw new Error('AI service did not detect any parcel boundaries.');
   }
-  if (payload.predictions.length > MAX_MODEL_PARCELS) {
+  if (parcelPredictions.length + imagePredictions.length > MAX_MODEL_PARCELS) {
     throw new Error(`AI service returned more than ${MAX_MODEL_PARCELS} parcels in one request.`);
   }
 
   const runId = Date.now();
-  return payload.predictions.map((prediction, index) => normalizePrediction(prediction, index, runId));
+  return {
+    parcels: parcelPredictions.map((prediction, index) => normalizePrediction(prediction, index, runId)),
+    imageAnnotations: imagePredictions.map((prediction, index) => normalizeImagePrediction(prediction, index, runId)),
+  };
 }

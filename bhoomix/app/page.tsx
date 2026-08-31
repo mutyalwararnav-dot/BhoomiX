@@ -3,14 +3,17 @@
 import { useCallback, useEffect, useState, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import TriageSidebar from '@/components/TriageSidebar';
-import UploadModal from '@/components/UploadModal';
+import UploadModal, { type UploadSuccessDetails } from '@/components/UploadModal';
 import ExportReportModal from '@/components/ExportReportModal';
 import FeedbackSyncButton from '@/components/FeedbackSyncButton';
 import UserMenu from '@/components/auth/UserMenu';
+import { useAuth } from '@/components/auth/AuthProvider';
 import ActivityHistoryModal from '@/components/ActivityHistoryModal';
 import DatasetReadinessModal from '@/components/DatasetReadinessModal';
-import ProcessingJobsModal from '@/components/ProcessingJobsModal';
-import { BrainCircuit, History, ListChecks } from 'lucide-react';
+import ProcessingJobsModal, { type ProcessingJob } from '@/components/ProcessingJobsModal';
+import ImageAnalysisModal from '@/components/ImageAnalysisModal';
+import ThemeToggle from '@/components/ThemeToggle';
+import { BrainCircuit, FileImage, History, Layers3, ListChecks, Loader2, MapPin, ScanSearch, Sparkles, Upload, X } from 'lucide-react';
 import type { WebGISMapHandle } from '@/components/map/WebGISMap';
 import type { ParcelFeature } from '@/lib/supabase';
 import { apiFetch } from '@/lib/api-fetch';
@@ -20,6 +23,7 @@ const WebGISMap = dynamic(() => import('@/components/map/WebGISMap'), { ssr: fal
 
 function Dashboard() {
   const mapRef = useRef<WebGISMapHandle>(null);
+  const { profile } = useAuth();
 
   const [selectedParcel, setSelectedParcel] = useState<ParcelFeature | null>(null);
   const [editingParcelId, setEditingParcelId] = useState<string | null>(null);
@@ -32,6 +36,16 @@ function Dashboard() {
   const [isDatasetOpen, setIsDatasetOpen] = useState(false);
   const [isJobsOpen, setIsJobsOpen] = useState(false);
   const [uploadNotice, setUploadNotice] = useState<string | null>(null);
+  const [latestUpload, setLatestUpload] = useState<UploadSuccessDetails | null>(null);
+  const [analysisImageUrl, setAnalysisImageUrl] = useState<string | null>(null);
+  const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (analysisImageUrl) URL.revokeObjectURL(analysisImageUrl);
+    };
+  }, [analysisImageUrl]);
 
   useEffect(() => {
     if (!uploadNotice) return;
@@ -49,6 +63,55 @@ function Dashboard() {
     setSelectedParcel(parcel);
     setEditingParcelId(null);
   }, []);
+
+  const openStoredAnalysis = useCallback(async (requestedJob?: ProcessingJob) => {
+    if (analysisImageUrl && latestUpload?.fileKind === 'imagery' && (!requestedJob || requestedJob.upload?.id === latestUpload.uploadId)) {
+      setIsJobsOpen(false);
+      setIsAnalysisOpen(true);
+      return;
+    }
+
+    setAnalysisLoading(true);
+    try {
+      let job = requestedJob;
+      if (!job) {
+        if (!profile) {
+          throw new Error('Upload an image in this browser session first. Sign in to reopen earlier stored uploads.');
+        }
+        const jobsResponse = await apiFetch('/api/processing-jobs', { cache: 'no-store' });
+        const jobsPayload = await jobsResponse.json() as { jobs?: ProcessingJob[]; error?: string };
+        if (!jobsResponse.ok) throw new Error(jobsPayload.error || 'Stored uploads could not be loaded.');
+        job = jobsPayload.jobs?.find((candidate) => candidate.status === 'completed' && candidate.upload?.id);
+      }
+      if (!job?.upload?.id) throw new Error('No completed imagery upload is available. Upload an image first.');
+
+      const previewResponse = await apiFetch(`/api/imagery/${job.upload.id}/preview`, { cache: 'no-store' });
+      if (!previewResponse.ok) {
+        const payload = await previewResponse.json().catch(() => null) as { error?: string } | null;
+        throw new Error(payload?.error || 'The stored image preview could not be loaded.');
+      }
+      const previewBlob = await previewResponse.blob();
+      const previewUrl = URL.createObjectURL(previewBlob);
+      setAnalysisImageUrl(previewUrl);
+      setLatestUpload({
+        uploadId: job.upload.id,
+        filename: job.upload.filename,
+        fileKind: 'imagery',
+        parcelCount: job.parcel_count,
+        imageAnnotationCount: job.parcel_count,
+        jobId: job.id,
+        processingMode: job.processing_mode,
+        isGeoreferenced: false,
+        sourceFile: null,
+      });
+      setIsJobsOpen(false);
+      setIsAnalysisOpen(true);
+    } catch (error: unknown) {
+      setUploadNotice(error instanceof Error ? error.message : 'Image Analysis could not be opened.');
+    } finally {
+      setAnalysisLoading(false);
+    }
+  }, [analysisImageUrl, latestUpload, profile]);
 
   // Fully robust and safe Edit & Save handler
   const handleEditSave = async (parcelId: string) => {
@@ -87,13 +150,19 @@ function Dashboard() {
   };
 
   return (
-    <main className="flex h-dvh w-screen flex-col overflow-hidden bg-slate-950 text-slate-100 font-sans md:flex-row">
+    <main className="bhoomix-theme-surface bhoomix-app-shell flex h-dvh w-screen flex-col overflow-hidden font-sans text-slate-100 md:flex-row">
       {/* Left Sidebar: Triage & Workflow */}
-      <div className="z-20 flex h-[44dvh] w-full flex-shrink-0 flex-col shadow-2xl md:h-full md:w-[380px]">
-        <div className="p-3 bg-[#0B0F1A] border-b border-[#2D3748] flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse" />
-            <h1 className="text-sm font-bold tracking-wide text-white">BhoomiX</h1>
+      <div className="bhoomix-glass z-20 flex h-[46dvh] w-full flex-shrink-0 flex-col border-r shadow-2xl md:h-full md:w-[400px]">
+        <div className="flex min-h-16 shrink-0 items-center justify-between border-b border-slate-700/60 px-4 py-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-indigo-400/35 bg-gradient-to-br from-indigo-500/30 via-violet-500/15 to-cyan-400/20 text-indigo-200 shadow-lg shadow-indigo-950/30">
+              <Layers3 className="h-5 w-5" />
+              <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-cyan-300 shadow-[0_0_8px_#67e8f9]" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2"><h1 className="text-base font-extrabold tracking-tight text-white">BhoomiX</h1><span className="rounded-full border border-indigo-400/25 bg-indigo-400/10 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-[0.14em] text-indigo-200">AI GIS</span></div>
+              <p className="truncate text-[10px] font-medium tracking-wide text-slate-500">Cadastral intelligence workspace</p>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <FeedbackSyncButton />
@@ -115,68 +184,111 @@ function Dashboard() {
       {/* Main Map Canvas Area */}
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         {/* Top Header Bar */}
-        <div className="z-10 flex min-h-14 shrink-0 items-center justify-between gap-2 border-b border-slate-800 bg-slate-900/90 px-2 py-2 backdrop-blur-md sm:px-4 lg:px-6">
-          <div className="hidden items-center gap-4 text-xs font-medium text-slate-400 lg:flex">
-            <span className="text-emerald-400 flex items-center gap-1.5 font-semibold">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" /> PostGIS Connected
-            </span>
-            <span>•</span>
-            <span>OpenFreeMap</span>
-            <span>•</span>
-            <span className="text-slate-200">Pune, Maharashtra</span>
+        <div className="bhoomix-topbar z-10 flex min-h-16 shrink-0 items-center justify-between gap-3 border-b px-2 py-2 sm:px-4 lg:px-5">
+          <div className="hidden min-w-0 items-center gap-3 2xl:flex">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-cyan-400/20 bg-cyan-400/10 text-cyan-300"><MapPin className="h-4 w-4" /></div>
+            <div><p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Operations map</p><p className="text-xs font-semibold text-slate-200">Pune, Maharashtra</p></div>
+            <div className="ml-2 flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5 text-[10px] font-bold text-emerald-300">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400 shadow-[0_0_7px_#34d399]" /> PostGIS live
+            </div>
           </div>
 
-          <div className="flex w-full flex-wrap items-center justify-end gap-1.5 sm:gap-2 lg:w-auto lg:gap-3">
+          <div className="flex w-full flex-nowrap items-center justify-start gap-1.5 overflow-x-auto py-1 sm:gap-2 2xl:w-auto 2xl:justify-end">
+            <ThemeToggle />
             <UserMenu />
             <button
               type="button"
+              onClick={() => void openStoredAnalysis()}
+              disabled={analysisLoading}
+              className="bhoomix-toolbar-button border-cyan-500/30 text-cyan-200 disabled:cursor-wait"
+            >
+              {analysisLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ScanSearch className="h-3.5 w-3.5" />}
+              <span className="hidden sm:inline">Image Analysis</span>
+              <span className="sm:hidden">Analyze</span>
+            </button>
+            <button
+              type="button"
               onClick={() => setIsJobsOpen(true)}
-              className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-slate-200 shadow-md transition-all hover:bg-slate-700 sm:px-3"
+              className="bhoomix-toolbar-button"
             >
               <ListChecks className="h-3.5 w-3.5" />
-              Jobs
+              <span className="hidden sm:inline">Uploads &amp; Jobs</span>
+              <span className="sm:hidden">Jobs</span>
             </button>
             <button
               type="button"
               onClick={() => setIsActivityOpen(true)}
-              className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-slate-200 shadow-md transition-all hover:bg-slate-700 sm:px-3"
+              className="bhoomix-toolbar-button"
             >
               <History className="h-3.5 w-3.5" />
-              Activity
+              <span className="hidden sm:inline">Activity</span>
             </button>
             <button
               type="button"
               onClick={() => setIsDatasetOpen(true)}
-              className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-slate-200 shadow-md transition-all hover:bg-slate-700 sm:px-3"
+              className="bhoomix-toolbar-button"
             >
               <BrainCircuit className="h-3.5 w-3.5" />
-              Dataset
+              <span className="hidden sm:inline">Dataset</span>
             </button>
             <button
               onClick={() => setIsExportOpen(true)}
               disabled={!selectedParcel}
               title={selectedParcel ? 'Export selected parcel report' : 'Select a parcel on the map first'}
-              className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-slate-200 shadow-md transition-all hover:bg-slate-700 sm:px-3"
+              className="bhoomix-toolbar-button"
             >
-              Export Report
+              <Sparkles className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Export Report</span>
+              <span className="sm:hidden">Export</span>
             </button>
             <button
               onClick={() => setIsUploadOpen(true)}
-              className="order-first rounded-lg bg-indigo-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-md transition-all hover:bg-indigo-500 sm:order-none sm:px-3"
+              className="bhoomix-primary-action order-first sm:order-none"
             >
-              UPLOAD DATA
+              <Upload className="h-3.5 w-3.5" /> Upload Data
             </button>
           </div>
         </div>
 
         {/* Map Viewport */}
-        <div className="relative min-h-0 w-full flex-1">
+        <div className="bhoomix-map-frame relative m-2 min-h-0 flex-1 overflow-hidden bg-slate-950 md:ml-0 md:mt-2">
           <WebGISMap
             ref={mapRef}
             selectedParcel={editingParcelId ? selectedParcel : null}
             parcelVersion={parcelVersion}
             onParcelSelect={handleMapParcelSelect}
           />
+          {latestUpload && (
+            <aside className="bhoomix-glass absolute bottom-4 right-4 z-20 w-[min(24rem,calc(100%-2rem))] rounded-2xl border border-cyan-400/25 p-4 shadow-2xl">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-cyan-400/20 bg-cyan-400/10 text-cyan-300">
+                  <FileImage className="h-5 w-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-300">Latest upload</p>
+                  <p className="mt-1 truncate text-sm font-semibold text-white" title={latestUpload.filename}>{latestUpload.filename}</p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    {latestUpload.processingMode === 'demo'
+                      ? 'Ready for manual boundary review'
+                      : `${(latestUpload.imageAnnotationCount ?? 0) + latestUpload.parcelCount} model boundar${(latestUpload.imageAnnotationCount ?? 0) + latestUpload.parcelCount === 1 ? 'y' : 'ies'} detected`}
+                    {latestUpload.jobId ? ` · Job ${latestUpload.jobId.slice(0, 8)}` : ''}
+                  </p>
+                  {latestUpload.fileKind === 'imagery' && !latestUpload.isGeoreferenced && (
+                    <p className="mt-2 text-xs leading-relaxed text-amber-300">This image has no map coordinates, so it cannot appear as a map overlay. Use a georeferenced GeoTIFF for accurate placement.</p>
+                  )}
+                  {latestUpload.fileKind === 'imagery' && (
+                    <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2">
+                      {analysisImageUrl && <button type="button" onClick={() => setIsAnalysisOpen(true)} className="text-xs font-semibold text-cyan-300 hover:text-cyan-200">Open image analysis →</button>}
+                      <button type="button" onClick={() => setIsJobsOpen(true)} className="text-xs font-semibold text-indigo-300 hover:text-indigo-200">Upload details →</button>
+                    </div>
+                  )}
+                </div>
+                <button type="button" onClick={() => setLatestUpload(null)} title="Dismiss latest upload" className="rounded-lg p-1 text-slate-500 hover:bg-slate-800 hover:text-white">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </aside>
+          )}
         </div>
       </div>
 
@@ -184,9 +296,16 @@ function Dashboard() {
       <UploadModal
         isOpen={isUploadOpen}
         onClose={() => setIsUploadOpen(false)}
-        onUploadSuccess={(count) => {
+        onViewJobs={() => setIsJobsOpen(true)}
+        onOpenAnalysis={() => setIsAnalysisOpen(true)}
+        onUploadSuccess={(result) => {
           setParcelVersion(v => v + 1);
-          setUploadNotice(`${count} AI parcel${count === 1 ? '' : 's'} uploaded successfully.`);
+          setLatestUpload(result);
+          if (result.sourceFile) setAnalysisImageUrl(URL.createObjectURL(result.sourceFile));
+          const detectedCount = result.parcelCount + (result.imageAnnotationCount ?? 0);
+          setUploadNotice(result.processingMode === 'demo'
+            ? `${result.filename}: uploaded and ready for manual boundary review.`
+            : `${result.filename}: ${detectedCount} model boundar${detectedCount === 1 ? 'y' : 'ies'} detected.`);
         }}
       />
 
@@ -205,7 +324,18 @@ function Dashboard() {
       )}
 
       {isJobsOpen && (
-        <ProcessingJobsModal onClose={() => setIsJobsOpen(false)} />
+        <ProcessingJobsModal recentUpload={latestUpload} onClose={() => setIsJobsOpen(false)} onAnalyze={(job) => void openStoredAnalysis(job)} />
+      )}
+
+      {isAnalysisOpen && latestUpload?.fileKind === 'imagery' && analysisImageUrl && (
+        <ImageAnalysisModal
+          key={`${latestUpload.uploadId ?? 'local'}:${analysisImageUrl}`}
+          uploadId={latestUpload.uploadId}
+          filename={latestUpload.filename}
+          imageUrl={analysisImageUrl}
+          processingMode={latestUpload.processingMode}
+          onClose={() => setIsAnalysisOpen(false)}
+        />
       )}
 
       {uploadNotice && (

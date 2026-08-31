@@ -3,11 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --webpack",
+    "dev": "node scripts/dev.mjs",
+    "model:serve": "node scripts/model-server.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "dataset:prepare": "node scripts/prepare-training-dataset.mjs"
+    "dataset:prepare": "node scripts/prepare-training-dataset.mjs",
+    "preflight": "node scripts/preflight.mjs",
+    "test:dataset": "node scripts/test-training-dataset.mjs",
+    "test:smoke": "node scripts/smoke-test.mjs",
+    "check": "npm run lint && tsc --noEmit && npm run test:dataset && npm run build"
   },
   "dependencies": {
     "@mapbox/mapbox-gl-draw": "^1.5.1",

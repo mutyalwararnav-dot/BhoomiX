@@ -13,6 +13,10 @@
 # testing
 /coverage
 /training/prepared/
+/training/runs/
+/.venv-ml/
+__pycache__/
+*.py[cod]
 
 # next.js
 /.next/

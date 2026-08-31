@@ -91,10 +91,9 @@ export default function FeedbackSyncButton() {
       onClick={handleSync}
       disabled={isSyncing}
       title={`${sampleCount} human-verified samples ready for model fine-tuning`}
-      className="flex items-center gap-2 px-3 py-1.5 rounded-lg
-        bg-slate-800/80 hover:bg-slate-700 border border-slate-700
-        hover:border-indigo-500/50 text-slate-300 hover:text-white
-        text-xs font-semibold transition-all group
+      className="group flex items-center gap-2 rounded-xl border border-indigo-400/20
+        bg-indigo-400/10 px-3 py-2 text-[11px] font-bold text-indigo-100
+        transition-all hover:border-indigo-400/45 hover:bg-indigo-400/20 hover:text-white
         disabled:opacity-60 disabled:cursor-not-allowed"
     >
       {/* Icon */}

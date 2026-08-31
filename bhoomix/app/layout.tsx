@@ -1,22 +1,6 @@
 import type { Metadata } from 'next';
-import { Inter, JetBrains_Mono } from 'next/font/google';
 import { AuthProvider } from '@/components/auth/AuthProvider';
 import './globals.css';
-
-// ─── Fonts ────────────────────────────────────────────────────────────────────
-const inter = Inter({
-  variable:  '--font-inter',
-  subsets:   ['latin'],
-  display:   'swap',
-  weight:    ['300', '400', '500', '600', '700'],
-});
-
-const jetbrainsMono = JetBrains_Mono({
-  variable: '--font-jetbrains',
-  subsets:  ['latin'],
-  display:  'swap',
-  weight:   ['400', '500', '600'],
-});
 
 // ─── SEO Metadata ─────────────────────────────────────────────────────────────
 export const metadata: Metadata = {
@@ -38,7 +22,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable}`}>
+    <html lang="en" data-theme="dark" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: `(function(){try{var saved=localStorage.getItem('bhoomix-theme');var theme=saved==='light'||saved==='dark'?saved:(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.dataset.theme=theme;}catch(e){document.documentElement.dataset.theme='dark';}})();` }} />
+      </head>
       <body className="h-screen overflow-hidden bg-[#0B0F1A] text-slate-100 antialiased">
         <AuthProvider>{children}</AuthProvider>
       </body>

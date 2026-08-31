@@ -4,9 +4,9 @@ import {
   AlertTriangle,
   BrainCircuit,
   CheckCircle2,
-  Database,
   Download,
   FileCheck2,
+  Images,
   Loader2,
   RefreshCw,
   ShieldCheck,
@@ -26,6 +26,12 @@ interface ReadinessData {
   usable_samples: number;
   geometry_usable_samples: number;
   image_linked_samples: number;
+  image_annotation_samples: number;
+  annotated_images: number;
+  excluded_demo_annotations: number;
+  pending_image_annotations: number;
+  rejected_image_annotations: number;
+  annotations_missing_dimensions: number;
   invalid_samples: number;
   unique_parcels: number;
   duplicate_records: number;
@@ -67,7 +73,7 @@ export default function DatasetReadinessModal({ onClose }: DatasetReadinessModal
   const { profile } = useAuth();
   const [data, setData] = useState<ReadinessData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [downloading, setDownloading] = useState(false);
+  const [downloading, setDownloading] = useState<'map' | 'images' | null>(null);
   const [error, setError] = useState('');
 
   const loadReadiness = useCallback(async () => {
@@ -112,24 +118,28 @@ export default function DatasetReadinessModal({ onClose }: DatasetReadinessModal
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  const downloadDataset = async () => {
+  const downloadDataset = async (kind: 'map' | 'images') => {
     if (downloading) return;
-    setDownloading(true);
+    setDownloading(kind);
     setError('');
     try {
-      const response = await apiFetch('/api/feedback/export');
-      if (!response.ok) throw new Error(`Export failed with status ${response.status}`);
+      const response = await apiFetch(kind === 'map' ? '/api/feedback/export' : '/api/dataset/image-annotations');
+      const contentType = response.headers.get('content-type') ?? '';
+      if (!response.ok) {
+        const payload = contentType.includes('json') ? await response.json() as { error?: string } : null;
+        throw new Error(payload?.error ?? `Export failed with status ${response.status}`);
+      }
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = 'bhoomix_retraining_dataset.geojson';
+      anchor.download = kind === 'map' ? 'bhoomix_retraining_dataset.geojson' : 'bhoomix_image_annotations.json';
       anchor.click();
       URL.revokeObjectURL(url);
     } catch (downloadError: unknown) {
       setError(downloadError instanceof Error ? downloadError.message : 'Dataset export failed.');
     } finally {
-      setDownloading(false);
+      setDownloading(null);
     }
   };
 
@@ -156,7 +166,7 @@ export default function DatasetReadinessModal({ onClose }: DatasetReadinessModal
             </div>
             <div>
               <h2 id="dataset-readiness-title" className="text-lg font-bold text-white">Training Dataset Readiness</h2>
-              <p className="mt-0.5 text-xs text-slate-400">Quality and balance checks for the human-reviewed GeoJSON dataset.</p>
+              <p className="mt-0.5 text-xs text-slate-400">Quality and balance checks for reviewed map parcels and image polygons.</p>
             </div>
           </div>
           <div className="flex items-center gap-1">
@@ -216,7 +226,7 @@ export default function DatasetReadinessModal({ onClose }: DatasetReadinessModal
               <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                 {[
                   { label: 'Model-ready samples', value: data.usable_samples, icon: FileCheck2, color: 'text-emerald-300' },
-                  { label: 'Unique parcels', value: data.unique_parcels, icon: Database, color: 'text-sky-300' },
+                  { label: 'Image polygons', value: data.image_annotation_samples, icon: Images, color: 'text-sky-300' },
                   { label: 'Correction pairs', value: data.correction_pairs, icon: ShieldCheck, color: 'text-indigo-300' },
                   { label: 'Identified reviews', value: data.identified_samples, icon: UsersRound, color: 'text-violet-300' },
                 ].map((metric) => (
@@ -268,17 +278,29 @@ export default function DatasetReadinessModal({ onClose }: DatasetReadinessModal
         </div>
 
         <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 bg-[#0B0F1A] px-5 py-4">
-          <p className="text-[10px] text-slate-500">Analysis is read-only and does not start model training.</p>
-          <button
-            type="button"
-            onClick={() => void downloadDataset()}
-            disabled={!data || downloading || !canExport}
-            title={canExport ? 'Download model-training GeoJSON' : 'Sign in as a surveyor or administrator to export training data'}
-            className="flex items-center gap-2 rounded-lg bg-violet-600 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-violet-500 disabled:opacity-50"
-          >
-            {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-            {downloading ? 'Preparing...' : canExport ? 'Download training GeoJSON' : 'Surveyor access required'}
-          </button>
+          <p className="text-[10px] text-slate-500">Exports data only; model training is not started.</p>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => void downloadDataset('map')}
+              disabled={!data || Boolean(downloading) || !canExport}
+              title={canExport ? 'Download reviewed map parcels' : 'Sign in as a surveyor or administrator to export training data'}
+              className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-slate-700 disabled:opacity-50"
+            >
+              {downloading === 'map' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              {downloading === 'map' ? 'Preparing...' : 'Map GeoJSON'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void downloadDataset('images')}
+              disabled={!data || Boolean(downloading) || !canExport}
+              title={canExport ? 'Download reviewed image polygons' : 'Sign in as a surveyor or administrator to export training data'}
+              className="flex items-center gap-2 rounded-lg bg-violet-600 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-violet-500 disabled:opacity-50"
+            >
+              {downloading === 'images' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Images className="h-4 w-4" />}
+              {downloading === 'images' ? 'Preparing...' : canExport ? 'Image annotations' : 'Surveyor access required'}
+            </button>
+          </div>
         </footer>
       </section>
     </div>
