@@ -3,6 +3,7 @@ import { supabaseServer as supabase } from '@/lib/supabase-server';
 import { internalServerError, rateLimitRequest, serverConfigurationError } from '@/lib/request-safety';
 
 interface StoredMetadata {
+  layer_type?: unknown;
   georeferencing?: {
     georeferenced?: unknown;
     sourceCrs?: unknown;
@@ -31,12 +32,18 @@ export async function GET(request: Request) {
   }
 
   const footprints = (data ?? []).flatMap((row) => {
-    const georeferencing = (row.metadata as StoredMetadata | null)?.georeferencing;
+    const storedMetadata = row.metadata as StoredMetadata | null;
+    const layerType = storedMetadata?.layer_type;
+    if (layerType === 'dsm' || layerType === 'dtm') return [];
+    const georeferencing = storedMetadata?.georeferencing;
     if (georeferencing?.georeferenced !== true || !georeferencing.footprint) return [];
 
     return [{
       id: row.id,
       filename: row.filename,
+      layerType: typeof storedMetadata?.layer_type === 'string'
+        ? storedMetadata.layer_type
+        : 'imagery',
       status: row.status,
       sourceCrs: typeof georeferencing.sourceCrs === 'string' ? georeferencing.sourceCrs : null,
       epsg: typeof georeferencing.epsg === 'number' ? georeferencing.epsg : null,

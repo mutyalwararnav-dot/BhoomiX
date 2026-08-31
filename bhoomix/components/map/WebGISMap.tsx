@@ -30,6 +30,8 @@ const EDIT_STROKE      = 'bhoomix-edit-stroke';
 const OPENFREEMAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 const IMAGERY_SOURCE_PREFIX = 'bhoomix-imagery-source-';
 const IMAGERY_LAYER_PREFIX = 'bhoomix-imagery-layer-';
+const ELEVATION_SOURCE_ID = 'bhoomix-ndsm-source';
+const ELEVATION_LAYER_ID = 'bhoomix-ndsm-layer';
 
 interface ImageryFootprint {
   id: string;
@@ -76,6 +78,10 @@ interface WebGISMapProps {
   selectedParcel?: ParcelFeature | null;
   parcelVersion?: number;
   onParcelSelect?: (parcel: ParcelFeature) => void;
+  elevationLayer?: {
+    previewUrl: string;
+    boundingBox: [number, number, number, number];
+  } | null;
 }
 
 interface RenderedParcelPath {
@@ -200,6 +206,27 @@ function ensureImageryLayers(map: maplibregl.Map, imagery: ImageryFootprint[]) {
   });
 }
 
+function setElevationLayer(
+  map: maplibregl.Map,
+  layer: WebGISMapProps['elevationLayer'],
+) {
+  if (map.getLayer(ELEVATION_LAYER_ID)) map.removeLayer(ELEVATION_LAYER_ID);
+  if (map.getSource(ELEVATION_SOURCE_ID)) map.removeSource(ELEVATION_SOURCE_ID);
+  if (!layer) return;
+  const [west, south, east, north] = layer.boundingBox;
+  map.addSource(ELEVATION_SOURCE_ID, {
+    type: 'image',
+    url: layer.previewUrl,
+    coordinates: [[west, north], [east, north], [east, south], [west, south]],
+  });
+  map.addLayer({
+    id: ELEVATION_LAYER_ID,
+    type: 'raster',
+    source: ELEVATION_SOURCE_ID,
+    paint: { 'raster-opacity': 0.72, 'raster-fade-duration': 0 },
+  }, map.getLayer(FILL_LAYER) ? FILL_LAYER : undefined);
+}
+
 function ensureEditLayers(map: maplibregl.Map) {
   if (!map || !map.getStyle()) return;
 
@@ -230,7 +257,7 @@ function ensureEditLayers(map: maplibregl.Map) {
 }
 
 const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
-  ({ selectedParcel, parcelVersion = 0, onParcelSelect }, ref) => {
+  ({ selectedParcel, parcelVersion = 0, onParcelSelect, elevationLayer = null }, ref) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapRef       = useRef<maplibregl.Map | null>(null);
 
@@ -430,6 +457,20 @@ const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
         refreshSvgOverlay(map);
       })();
     }, [mapReady, fetchImagery, fetchParcels, parcelVersion, refreshSvgOverlay]);
+
+    useEffect(() => {
+      const map = mapRef.current;
+      if (!map || !mapReady || !map.getStyle()) return;
+      try {
+        setElevationLayer(map, elevationLayer);
+        if (elevationLayer) {
+          const [west, south, east, north] = elevationLayer.boundingBox;
+          map.fitBounds([[west, south], [east, north]], { padding: 48, duration: 900 });
+        }
+      } catch (error) {
+        console.warn('[WebGISMap] Could not display the nDSM layer:', error);
+      }
+    }, [elevationLayer, mapReady]);
 
     // Keep the SVG fallback synchronized with MapLibre camera movement.
     useEffect(() => {
@@ -671,6 +712,12 @@ const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
               <div className="flex items-center gap-3 mb-1.5 border-b border-slate-700 pb-1.5">
                 <div className="w-3 h-3 rounded-sm flex-shrink-0 bg-cyan-300/70 ring-1 ring-cyan-200" />
                 <span className="text-[10px] text-cyan-200">Drone imagery ({imageryCount})</span>
+              </div>
+            )}
+            {elevationLayer && (
+              <div className="mb-1.5 flex items-center gap-3 border-b border-slate-700 pb-1.5">
+                <div className="h-3 w-3 flex-shrink-0 rounded-sm bg-gradient-to-r from-blue-500 via-yellow-400 to-red-500" />
+                <span className="text-[10px] text-cyan-200">nDSM height layer</span>
               </div>
             )}
             {Object.entries(STATUS_COLOR).map(([s, c]) => (

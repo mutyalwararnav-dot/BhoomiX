@@ -13,7 +13,8 @@ import DatasetReadinessModal from '@/components/DatasetReadinessModal';
 import ProcessingJobsModal, { type ProcessingJob } from '@/components/ProcessingJobsModal';
 import ImageAnalysisModal from '@/components/ImageAnalysisModal';
 import ThemeToggle from '@/components/ThemeToggle';
-import { BrainCircuit, FileImage, History, Layers3, ListChecks, Loader2, MapPin, ScanSearch, Sparkles, Upload, X } from 'lucide-react';
+import ElevationUploadModal, { type ElevationLayerResult } from '@/components/ElevationUploadModal';
+import { BrainCircuit, FileImage, History, Layers3, ListChecks, Loader2, MapPin, Mountain, ScanSearch, Sparkles, Upload, X } from 'lucide-react';
 import type { WebGISMapHandle } from '@/components/map/WebGISMap';
 import type { ParcelFeature } from '@/lib/supabase';
 import { apiFetch } from '@/lib/api-fetch';
@@ -40,6 +41,8 @@ function Dashboard() {
   const [analysisImageUrl, setAnalysisImageUrl] = useState<string | null>(null);
   const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
   const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [isElevationOpen, setIsElevationOpen] = useState(false);
+  const [elevationLayer, setElevationLayer] = useState<ElevationLayerResult | null>(null);
 
   useEffect(() => {
     return () => {
@@ -52,6 +55,39 @@ function Dashboard() {
     const timeout = window.setTimeout(() => setUploadNotice(null), 3500);
     return () => window.clearTimeout(timeout);
   }, [uploadNotice]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await apiFetch('/api/elevation/bundles', { cache: 'no-store' });
+        if (!response.ok) return;
+        const payload = await response.json() as {
+          bundles?: Array<{
+            previewUrl: string;
+            boundingBox: [number, number, number, number];
+            crs: string | null;
+            statistics: ElevationLayerResult['statistics'];
+            validation?: { aligned_width?: number; aligned_height?: number };
+          }>;
+        };
+        const latest = payload.bundles?.[0];
+        if (!cancelled && latest?.previewUrl && Array.isArray(latest.boundingBox) && latest.statistics) {
+          setElevationLayer({
+            previewUrl: latest.previewUrl,
+            boundingBox: latest.boundingBox,
+            crs: latest.crs || 'Unknown CRS',
+            width: latest.validation?.aligned_width || 0,
+            height: latest.validation?.aligned_height || 0,
+            statistics: latest.statistics,
+          });
+        }
+      } catch {
+        // The dashboard and ordinary imagery remain usable when no elevation bundle exists.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // Handle Fly To & activate drawing/editing mode
   const handleFlyTo = (parcel: ParcelFeature | null) => {
@@ -198,6 +234,16 @@ function Dashboard() {
             <UserMenu />
             <button
               type="button"
+              onClick={() => setIsElevationOpen(true)}
+              className="bhoomix-toolbar-button border-cyan-500/30 text-cyan-200"
+              title="Process aligned ORI, DSM and DTM GeoTIFF layers"
+            >
+              <Mountain className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Elevation</span>
+              <span className="sm:hidden">Layers</span>
+            </button>
+            <button
+              type="button"
               onClick={() => void openStoredAnalysis()}
               disabled={analysisLoading}
               className="bhoomix-toolbar-button border-cyan-500/30 text-cyan-200 disabled:cursor-wait"
@@ -257,6 +303,7 @@ function Dashboard() {
             selectedParcel={editingParcelId ? selectedParcel : null}
             parcelVersion={parcelVersion}
             onParcelSelect={handleMapParcelSelect}
+            elevationLayer={elevationLayer}
           />
           {latestUpload && (
             <aside className="bhoomix-glass absolute bottom-4 right-4 z-20 w-[min(24rem,calc(100%-2rem))] rounded-2xl border border-cyan-400/25 p-4 shadow-2xl">
@@ -322,6 +369,15 @@ function Dashboard() {
       {isDatasetOpen && (
         <DatasetReadinessModal onClose={() => setIsDatasetOpen(false)} />
       )}
+
+      <ElevationUploadModal
+        isOpen={isElevationOpen}
+        onClose={() => setIsElevationOpen(false)}
+        onComplete={(result) => {
+          setElevationLayer(result);
+          setUploadNotice(`ORI, DSM and DTM aligned. nDSM coverage ${(result.statistics.valid_coverage * 100).toFixed(1)}%.`);
+        }}
+      />
 
       {isJobsOpen && (
         <ProcessingJobsModal recentUpload={latestUpload} onClose={() => setIsJobsOpen(false)} onAnalyze={(job) => void openStoredAnalysis(job)} />

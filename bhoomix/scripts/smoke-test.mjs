@@ -22,6 +22,12 @@ async function main() {
     headers: { Origin: baseUrl, 'Content-Type': 'application/json' },
     body: '{',
   });
+  await check('incomplete elevation bundle is rejected', '/api/elevation/process', 400, {
+    method: 'POST',
+    headers: { Origin: baseUrl, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ layers: {} }),
+  });
+  await check('saved elevation bundles load', '/api/elevation/bundles', 200);
   await check('invalid job identifier is rejected', '/api/processing-jobs/not-a-uuid', 400);
   await check('guest job history is protected', '/api/processing-jobs', 403);
   await check('guest training export is protected', '/api/dataset/image-annotations', 403);

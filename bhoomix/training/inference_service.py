@@ -12,6 +12,7 @@ from PIL import Image
 from torchvision.transforms import functional as TF
 
 from training.rooftop_baseline import IMAGE_SIZE, load_checkpoint
+from training.elevation_pipeline import ElevationValidationError, process_elevation_bundle
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +20,7 @@ CHECKPOINT_PATH = Path(
     os.getenv("ROOFTOP_MODEL_PATH", PROJECT_ROOT / "training/runs/rooftop-baseline/best.pt")
 ).resolve()
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
+MAX_ELEVATION_BYTES = 100 * 1024 * 1024
 THRESHOLD = float(os.getenv("ROOFTOP_MODEL_THRESHOLD", "0.50"))
 MIN_AREA = int(os.getenv("ROOFTOP_MODEL_MIN_AREA", "300"))
 # Training resized complete 1024x1024 source scenes to IMAGE_SIZE (512).
@@ -107,6 +109,7 @@ def health() -> dict:
         "checkpoint": CHECKPOINT_PATH.name,
         "threshold": THRESHOLD,
         "tile_size": TILE_SIZE,
+        "capabilities": ["rgb_rooftop_inference", "ori_dsm_dtm_validation", "ndsm_generation"],
     }
 
 
@@ -131,4 +134,30 @@ async def predict(file: UploadFile = File(...)) -> dict:
         "model": "bhoomix-rooftop-unet-v1",
         "task": "rooftop_segmentation",
         "prediction_count": len(polygons),
+    }
+
+
+@app.post("/elevation/process")
+async def process_elevation(
+    ori: UploadFile = File(...),
+    dsm: UploadFile = File(...),
+    dtm: UploadFile = File(...),
+) -> dict:
+    uploads = {"ORI": ori, "DSM": dsm, "DTM": dtm}
+    payloads: dict[str, bytes] = {}
+    for label, upload in uploads.items():
+        if upload.content_type != "image/tiff":
+            raise HTTPException(status_code=415, detail=f"{label} must be a GeoTIFF file.")
+        data = await upload.read(MAX_ELEVATION_BYTES + 1)
+        if not data or len(data) > MAX_ELEVATION_BYTES:
+            raise HTTPException(status_code=413, detail=f"{label} must be between 1 byte and 100 MB.")
+        payloads[label] = data
+    try:
+        result = process_elevation_bundle(payloads["ORI"], payloads["DSM"], payloads["DTM"])
+    except ElevationValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return {
+        **result,
+        "pipeline": "bhoomix-ori-dsm-dtm-v1",
+        "training_status": "awaiting_paired_training_samples",
     }

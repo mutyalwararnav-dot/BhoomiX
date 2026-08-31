@@ -32,6 +32,8 @@ npm run build
 npm run start
 ```
 
+Container deployment files and the production checklist are documented in [`DEPLOYMENT.md`](DEPLOYMENT.md).
+
 Before model training, also run:
 
 ```bash
@@ -94,6 +96,12 @@ This experimental checkpoint detects visible rooftop footprints. It does not pro
 ## Imagery coordinates
 
 For an accurate map overlay, upload a georeferenced TIFF containing both an affine map transform and a supported EPSG code. BhoomiX currently converts WGS84 (`EPSG:4326`), Web Mercator (`EPSG:3857`), and WGS84 UTM north/south zones (`EPSG:32601`–`32660` and `EPSG:32701`–`32760`) into map-ready longitude/latitude bounds. The extracted metadata is stored with the upload and is available from `GET /api/imagery/footprints`. The map requests a bounded JPEG preview from `GET /api/imagery/[id]/overlay` and places it beneath parcel polygons; original private TIFF files are not exposed directly.
+
+### ORI, DSM and DTM elevation workflow
+
+Use the **Elevation** action on the dashboard to select a matched ORI, DSM and DTM GeoTIFF triplet. BhoomiX validates their CRS, transforms and shared coverage, aligns DSM and DTM to the ORI grid, calculates `nDSM = max(DSM - DTM, 0)`, and displays the generated height preview on the map. The raster service requires `rasterio`; install `training/requirements-elevation.txt` inside `.venv-ml`. A synthetic demonstration triplet can be generated with `.venv-ml\\Scripts\\python.exe training/create_elevation_demo.py`.
+
+The connected rooftop checkpoint still consumes RGB imagery. A genuine multi-input checkpoint requires reviewer-approved masks paired with real ORI/DSM/DTM triplets; synthetic demo rasters and unrelated JPG labels must not be represented as production training data.
 
 Ordinary JPG/PNG files and TIFF files without complete coordinate metadata may still be stored and processed, but BhoomiX labels them as unlocated and does not claim that they align accurately with the basemap. A raw drone photograph normally needs photogrammetry/orthomosaic processing before it becomes a georeferenced map layer.
 

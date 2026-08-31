@@ -27,12 +27,19 @@ function browserMimeType(file: File) {
 export async function uploadImageryDirect(
   file: File,
   onProgress?: (percentage: number) => void,
+  options?: { purpose?: 'imagery' | 'elevation'; layerType?: 'ori' | 'dsm' | 'dtm' },
 ): Promise<StagedImagery> {
   const mimeType = browserMimeType(file);
   const response = await apiFetch('/api/imagery/upload-url', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ filename: file.name, mimeType, size: file.size }),
+    body: JSON.stringify({
+      filename: file.name,
+      mimeType,
+      size: file.size,
+      purpose: options?.purpose ?? 'imagery',
+      layerType: options?.layerType,
+    }),
   });
   const payload = await response.json() as UploadUrlResponse;
   if (!response.ok || !payload.storagePath || !payload.signedUrl) {
@@ -81,4 +88,3 @@ export async function processStagedImagery<T>(staged: StagedImagery): Promise<T>
   if (!response.ok) throw new Error(payload.error || `Image processing failed with status ${response.status}.`);
   return payload;
 }
-

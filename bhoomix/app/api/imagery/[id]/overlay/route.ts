@@ -7,10 +7,12 @@ export const maxDuration = 60;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_PREVIEW_EDGE = 1600;
-const MAX_STORED_IMAGE_BYTES = 25 * 1024 * 1024;
+const MAX_STORED_IMAGE_BYTES = 100 * 1024 * 1024;
 
 interface StoredMetadata {
   extension?: unknown;
+  layer_type?: unknown;
+  preview_path?: unknown;
   georeferencing?: {
     georeferenced?: unknown;
   };
@@ -52,9 +54,11 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     return Response.json({ error: 'The stored image is too large to preview safely.' }, { status: 413 });
   }
 
+  const isNdsmPreview = metadata?.layer_type === 'ndsm' && typeof metadata.preview_path === 'string';
+  const downloadPath = isNdsmPreview ? metadata.preview_path as string : upload.file_path;
   const { data: storedFile, error: downloadError } = await supabase.storage
     .from('drone_datasets')
-    .download(upload.file_path);
+    .download(downloadPath);
 
   if (downloadError || !storedFile) {
     return Response.json({ error: downloadError?.message || 'Stored imagery could not be downloaded.' }, { status: 502 });

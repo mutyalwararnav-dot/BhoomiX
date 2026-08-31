@@ -1,0 +1,9 @@
+.git
+.next
+.venv-ml
+node_modules
+.env*
+training/prepared
+training/runs
+*.log
+*.tsbuildinfo
