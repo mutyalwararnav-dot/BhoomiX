@@ -36,7 +36,7 @@ function detectImageType(bytes: Uint8Array): VerifiedImageType | null {
 // Accepts a small JSON reference to a direct-to-Supabase upload. Multipart is
 // retained for local/backward compatibility, but production clients use JSON.
 // 1. Downloads a staged private image, or stores a legacy multipart upload
-// 2. Inserts a drone_uploads record             (status: uploaded → processing_ai → ready)
+// 2. Inserts a drone_uploads record             (status: processing_ai → ready)
 // 3. Calls the configured AI service. Without a model, no boundaries are invented.
 // 4. Stores map-space parcels and image-space boundary predictions
 // Returns { success, uploadId, parcelCount, imageAnnotationCount }
@@ -201,6 +201,18 @@ export async function POST(request: Request) {
       }
     }
 
+    const processingMode = isModelConfigured() ? 'model' : 'demo';
+    const modelVersion = processingMode === 'model'
+      ? process.env.AI_MODEL_VERSION || 'unversioned'
+      : 'manual-review-v1';
+    // Start local inference as soon as the bytes and dimensions are verified.
+    // Cloud storage and database setup can proceed at the same time.
+    const earlyInference = processingMode === 'model'
+      ? runModelInference(file)
+          .then((result) => ({ result, error: null as unknown }))
+          .catch((error: unknown) => ({ result: null, error }))
+      : null;
+
     if (!alreadyStored) {
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-120) || 'upload';
       const legacyStoragePath = `uploads/${Date.now()}_${crypto.randomUUID()}_${safeName}`;
@@ -239,13 +251,16 @@ export async function POST(request: Request) {
       },
     };
 
-    // ── 3a. Insert drone_uploads record (status: uploaded) ──────────────────
+    // ── 3. Create processing records ───────────────────────────────────────
+    // Write the active state immediately. Avoiding separate queued/uploaded
+    // updates saves two cloud round trips on every synchronous upload.
+    const processingStartedAt = new Date().toISOString();
     const { data: uploadRow, error: insertError } = await supabase
       .from('drone_uploads')
       .insert({
         filename: file.name,
         file_path: filePath,
-        status: 'uploaded',
+        status: 'processing_ai',
         file_size_bytes: file.size,
         mime_type: verifiedType,
         uploaded_by: actor,
@@ -267,20 +282,17 @@ export async function POST(request: Request) {
     const uploadId: string = uploadRow.id;
     trackedUploadId = uploadId;
 
-    const processingMode = isModelConfigured() ? 'model' : 'demo';
-    const modelVersion = processingMode === 'model'
-      ? process.env.AI_MODEL_VERSION || 'unversioned'
-      : 'manual-review-v1';
-
     const { data: jobRow, error: jobError } = await supabase
       .from('imagery_processing_jobs')
       .insert({
         upload_id: uploadId,
-        status: 'queued',
+        status: 'processing',
         processing_mode: processingMode,
-        progress: 5,
+        progress: 20,
         model_version: modelVersion,
         requested_by: actor,
+        started_at: processingStartedAt,
+        updated_at: processingStartedAt,
       })
       .select('id')
       .single();
@@ -294,33 +306,25 @@ export async function POST(request: Request) {
     const jobId: string = jobRow.id;
     trackedJobId = jobId;
 
-    // ── 3b. Mark as processing_ai ───────────────────────────────────────────
-    const processingStartedAt = new Date().toISOString();
-    await Promise.all([
-      supabase
-        .from('drone_uploads')
-        .update({ status: 'processing_ai' })
-        .eq('id', uploadId),
-      supabase
-        .from('imagery_processing_jobs')
-        .update({ status: 'processing', progress: 20, started_at: processingStartedAt, updated_at: processingStartedAt })
-        .eq('id', jobId),
-    ]);
-
     // ── 4. Run model inference ──────────────────────────────────────────────
     let inferredParcels: InferredParcel[] = [];
     let imageAnnotations: ImageAnnotation[] = [];
 
     if (processingMode === 'model') {
       try {
-        const inference = await runModelInference(file);
+        const settledInference = await earlyInference;
+        if (!settledInference?.result) throw settledInference?.error || new Error('The AI service returned no result.');
+        const inference = settledInference.result;
         inferredParcels = inference.parcels;
         imageAnnotations = inference.imageAnnotations;
       } catch (modelError: unknown) {
         const message = modelError instanceof Error ? modelError.message : 'Unknown AI service error';
         console.error('[ProcessImagery] AI inference failed:', message);
-        await supabase.from('drone_uploads').update({ status: 'failed', error_message: message }).eq('id', uploadId);
-        await supabase.from('imagery_processing_jobs').update({ status: 'failed', progress: 100, error_message: message, completed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', jobId);
+        const failedAt = new Date().toISOString();
+        await Promise.all([
+          supabase.from('drone_uploads').update({ status: 'failed', error_message: message }).eq('id', uploadId),
+          supabase.from('imagery_processing_jobs').update({ status: 'failed', progress: 100, error_message: message, completed_at: failedAt, updated_at: failedAt }).eq('id', jobId),
+        ]);
         return NextResponse.json({ error: 'The AI processing service failed.', jobId }, { status: 502 });
       }
     }
@@ -345,11 +349,11 @@ export async function POST(request: Request) {
       if (rpcError || rpcFailure) {
         const failureMessage = rpcError?.message || rpcFailure || 'Unknown parcel insertion error';
         console.error('[ProcessImagery] seed_mock_parcels RPC failed:', failureMessage);
-        await supabase
-          .from('drone_uploads')
-          .update({ status: 'failed', error_message: failureMessage })
-          .eq('id', uploadId);
-        await supabase.from('imagery_processing_jobs').update({ status: 'failed', progress: 100, error_message: failureMessage, completed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', jobId);
+        const failedAt = new Date().toISOString();
+        await Promise.all([
+          supabase.from('drone_uploads').update({ status: 'failed', error_message: failureMessage }).eq('id', uploadId),
+          supabase.from('imagery_processing_jobs').update({ status: 'failed', progress: 100, error_message: failureMessage, completed_at: failedAt, updated_at: failedAt }).eq('id', jobId),
+        ]);
         return NextResponse.json(
           { error: 'The detected parcels could not be stored.', jobId },
           { status: 500 }
@@ -357,7 +361,7 @@ export async function POST(request: Request) {
       }
     }
 
-    // ── 6. Mark upload as ready ─────────────────────────────────────────────
+    // ── 6. Prepare final persisted result ──────────────────────────────────
     const processedMetadata = imageAnnotations.length > 0
       ? {
           ...uploadMetadata,
@@ -369,18 +373,6 @@ export async function POST(request: Request) {
           },
         }
       : uploadMetadata;
-    const processingFinishedAt = new Date().toISOString();
-    await Promise.all([
-      supabase
-        .from('drone_uploads')
-        .update({ status: 'ready', error_message: null, completed_at: processingFinishedAt, metadata: processedMetadata })
-        .eq('id', uploadId),
-      supabase
-        .from('imagery_processing_jobs')
-        .update({ progress: 85, updated_at: processingFinishedAt })
-        .eq('id', jobId),
-    ]);
-
     // ── 7. Spatial validation ───────────────────────────────────────────────
     // Run the PostGIS overlap scan on ALL ai_suggestion parcels.
     // Any newly inserted polygon that intersects an existing one will have
@@ -412,17 +404,27 @@ export async function POST(request: Request) {
 
     const detectedBoundaryCount = inferredParcels.length + imageAnnotations.length;
 
-    await supabase
-      .from('imagery_processing_jobs')
-      .update({
-        status: 'completed',
-        progress: 100,
-        parcel_count: detectedBoundaryCount,
-        conflict_count: conflictCount,
-        completed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', jobId);
+    // Persist both final states concurrently. Image Analysis already receives
+    // annotations in this response, so an intermediate 85% write adds latency
+    // without improving what the user sees.
+    const processingFinishedAt = new Date().toISOString();
+    await Promise.all([
+      supabase
+        .from('drone_uploads')
+        .update({ status: 'ready', error_message: null, completed_at: processingFinishedAt, metadata: processedMetadata })
+        .eq('id', uploadId),
+      supabase
+        .from('imagery_processing_jobs')
+        .update({
+          status: 'completed',
+          progress: 100,
+          parcel_count: detectedBoundaryCount,
+          conflict_count: conflictCount,
+          completed_at: processingFinishedAt,
+          updated_at: processingFinishedAt,
+        })
+        .eq('id', jobId),
+    ]);
 
     return NextResponse.json({
       success:       true,
@@ -452,12 +454,15 @@ export async function POST(request: Request) {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     console.error('[ProcessImagery] Unexpected error:', message);
+    const failedAt = new Date().toISOString();
+    const failureWrites = [];
     if (trackedUploadId) {
-      await supabase.from('drone_uploads').update({ status: 'failed', error_message: message }).eq('id', trackedUploadId);
+      failureWrites.push(supabase.from('drone_uploads').update({ status: 'failed', error_message: message }).eq('id', trackedUploadId));
     }
     if (trackedJobId) {
-      await supabase.from('imagery_processing_jobs').update({ status: 'failed', progress: 100, error_message: message, completed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', trackedJobId);
+      failureWrites.push(supabase.from('imagery_processing_jobs').update({ status: 'failed', progress: 100, error_message: message, completed_at: failedAt, updated_at: failedAt }).eq('id', trackedJobId));
     }
+    await Promise.all(failureWrites);
     return internalServerError('Image processing could not be completed.');
   }
 }

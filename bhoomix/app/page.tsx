@@ -220,6 +220,11 @@ function Dashboard() {
             refreshTrigger={parcelVersion}
             onParcelStatusChange={() => setParcelVersion(v => v + 1)}
             onValidationComplete={() => setParcelVersion(v => v + 1)}
+            referenceBuildingCount={referenceBuildingCount}
+            recentUpload={latestUpload}
+            onUploadData={() => setIsUploadOpen(true)}
+            onOpenAnalysis={() => void openStoredAnalysis()}
+            onOpenJobs={() => setIsJobsOpen(true)}
           />
         </div>
       </div>
@@ -237,7 +242,6 @@ function Dashboard() {
           </div>
 
           <div className="flex w-full flex-nowrap items-center justify-start gap-1.5 overflow-x-auto py-1 sm:gap-2 2xl:w-auto 2xl:justify-end">
-            <ThemeToggle />
             <UserMenu />
             <button
               type="button"
@@ -294,6 +298,7 @@ function Dashboard() {
               <span className="hidden sm:inline">Export Report</span>
               <span className="sm:hidden">Export</span>
             </button>
+            <ThemeToggle />
             <button
               onClick={() => setIsUploadOpen(true)}
               className="bhoomix-primary-action order-first sm:order-none"
@@ -411,7 +416,8 @@ function Dashboard() {
         onUploadSuccess={(result) => {
           setParcelVersion(v => v + 1);
           setLatestUpload(result);
-          if (result.sourceFile) setAnalysisImageUrl(URL.createObjectURL(result.sourceFile));
+          if (result.analysisPreviewUrl) setAnalysisImageUrl(result.analysisPreviewUrl);
+          else if (result.sourceFile) setAnalysisImageUrl(URL.createObjectURL(result.sourceFile));
           const detectedCount = result.parcelCount + (result.imageAnnotationCount ?? 0);
           setUploadNotice(result.processingMode === 'demo'
             ? `${result.filename}: uploaded and ready for manual boundary review.`

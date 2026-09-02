@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import type { ParcelFeature } from '@/lib/supabase';
-import { Crosshair, Check, X, Loader2, PenLine, ShieldAlert, ScanSearch, Search } from 'lucide-react';
+import { ArrowRight, Building2, Check, Cpu, Crosshair, FileImage, ListChecks, Loader2, PenLine, ScanSearch, Search, ShieldAlert, UploadCloud, X } from 'lucide-react';
 import { apiFetch } from '@/lib/api-fetch';
 import { fetchActiveParcels } from '@/lib/parcels-client';
+import type { UploadSuccessDetails } from '@/components/UploadModal';
 
 interface TriageSidebarProps {
   onFlyTo?: (parcel: ParcelFeature | null) => void;
@@ -13,6 +14,11 @@ interface TriageSidebarProps {
   editingParcelId?: string | null;
   refreshTrigger?: number;
   onValidationComplete?: (conflictCount: number) => void;
+  referenceBuildingCount?: number;
+  recentUpload?: UploadSuccessDetails | null;
+  onUploadData?: () => void;
+  onOpenAnalysis?: () => void;
+  onOpenJobs?: () => void;
 }
 
 export default function TriageSidebar({
@@ -22,6 +28,11 @@ export default function TriageSidebar({
   editingParcelId,
   refreshTrigger = 0,
   onValidationComplete,
+  referenceBuildingCount = 0,
+  recentUpload,
+  onUploadData,
+  onOpenAnalysis,
+  onOpenJobs,
 }: TriageSidebarProps) {
   const [parcels, setParcels]          = useState<ParcelFeature[]>([]);
   const [isLoading, setIsLoading]     = useState(true);
@@ -33,6 +44,7 @@ export default function TriageSidebar({
   const [searchQuery, setSearchQuery] = useState('');
   const [queueFilter, setQueueFilter] = useState<'all' | 'conflict' | 'ai_suggestion'>('all');
   const [legacyHiddenCount, setLegacyHiddenCount] = useState(0);
+  const [modelHealth, setModelHealth] = useState<{ available: boolean; model: string | null } | null>(null);
 
   const replaceParcels = (payload: Awaited<ReturnType<typeof fetchActiveParcels>>) => {
     const triageParcels = (payload.geojson.features as ParcelFeature[]).filter(
@@ -55,6 +67,20 @@ export default function TriageSidebar({
     }
     loadParcels();
   }, [refreshTrigger]);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const response = await apiFetch('/api/model-health', { cache: 'no-store' });
+        const payload = await response.json() as { available?: boolean; model?: string | null };
+        if (active) setModelHealth({ available: payload.available === true, model: payload.model ?? null });
+      } catch {
+        if (active) setModelHealth({ available: false, model: null });
+      }
+    })();
+    return () => { active = false; };
+  }, []);
 
   const handleValidate = async () => {
     setIsValidating(true);
@@ -261,11 +287,104 @@ export default function TriageSidebar({
                 {legacyHiddenCount} legacy demo/test parcel{legacyHiddenCount === 1 ? ' is' : 's are'} hidden because they are not linked to verified geospatial imagery. Upload georeferenced GeoJSON or run the model on a georeferenced GeoTIFF to populate this queue accurately.
               </div>
             )}
+
+            {parcels.length === 0 && !normalizedQuery && (
+              <WorkspaceOverview
+                referenceBuildingCount={referenceBuildingCount}
+                recentUpload={recentUpload}
+                modelHealth={modelHealth}
+                onUploadData={onUploadData}
+                onOpenAnalysis={onOpenAnalysis}
+                onOpenJobs={onOpenJobs}
+              />
+            )}
           </>
         )}
       </div>
     </div>
   );
+}
+
+function WorkspaceOverview({
+  referenceBuildingCount,
+  recentUpload,
+  modelHealth,
+  onUploadData,
+  onOpenAnalysis,
+  onOpenJobs,
+}: {
+  referenceBuildingCount: number;
+  recentUpload?: UploadSuccessDetails | null;
+  modelHealth: { available: boolean; model: string | null } | null;
+  onUploadData?: () => void;
+  onOpenAnalysis?: () => void;
+  onOpenJobs?: () => void;
+}) {
+  const detectionCount = recentUpload
+    ? recentUpload.parcelCount + (recentUpload.imageAnnotationCount ?? 0)
+    : 0;
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-indigo-400/20 bg-gradient-to-br from-indigo-500/10 via-slate-900/85 to-cyan-500/5 shadow-xl shadow-black/15">
+      <div className="border-b border-slate-700/60 px-4 py-3.5">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[9px] font-extrabold uppercase tracking-[0.18em] text-cyan-300">Workspace overview</p>
+            <p className="mt-1 text-sm font-bold text-white">Ready for the next survey upload</p>
+          </div>
+          <div className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9px] font-bold uppercase tracking-wider ${modelHealth?.available ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300' : modelHealth === null ? 'border-slate-600 bg-slate-800 text-slate-400' : 'border-amber-400/25 bg-amber-400/10 text-amber-300'}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${modelHealth?.available ? 'bg-emerald-400' : modelHealth === null ? 'animate-pulse bg-slate-400' : 'bg-amber-400'}`} />
+            {modelHealth?.available ? 'AI online' : modelHealth === null ? 'Checking AI' : 'AI offline'}
+          </div>
+        </div>
+        {modelHealth?.model && <p className="mt-2 truncate font-mono text-[9px] text-slate-500" title={modelHealth.model}>{modelHealth.model}</p>}
+      </div>
+
+      <div className="grid grid-cols-3 gap-2 p-3">
+        <OverviewMetric icon={<Building2 className="h-3.5 w-3.5" />} value={referenceBuildingCount.toLocaleString()} label="OSM references" tone="cyan" />
+        <OverviewMetric icon={<FileImage className="h-3.5 w-3.5" />} value={String(detectionCount)} label="Image detections" tone="indigo" />
+        <OverviewMetric icon={<Cpu className="h-3.5 w-3.5" />} value={modelHealth?.available ? 'Ready' : 'Check'} label="AI service" tone="emerald" />
+      </div>
+
+      <div className="mx-3 rounded-xl border border-slate-700/65 bg-slate-950/45 p-3">
+        <p className="text-[9px] font-bold uppercase tracking-[0.15em] text-slate-500">Latest upload</p>
+        {recentUpload ? (
+          <>
+            <p className="mt-1.5 truncate text-xs font-semibold text-slate-200" title={recentUpload.filename}>{recentUpload.filename}</p>
+            <p className="mt-1 text-[10px] text-slate-500">{detectionCount} boundar{detectionCount === 1 ? 'y' : 'ies'} · {recentUpload.processingMode === 'model' ? 'AI processed' : 'Manual review'}</p>
+            {recentUpload.fileKind === 'imagery' && onOpenAnalysis && (
+              <button type="button" onClick={onOpenAnalysis} className="mt-2 flex items-center gap-1 text-[10px] font-bold text-cyan-300 hover:text-cyan-200">Open analysis <ArrowRight className="h-3 w-3" /></button>
+            )}
+          </>
+        ) : (
+          <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">No image has been uploaded in this browser session.</p>
+        )}
+      </div>
+
+      <div className="grid grid-cols-3 gap-2 p-3">
+        <QuickAction icon={<UploadCloud className="h-3.5 w-3.5" />} label="Upload" onClick={onUploadData} primary />
+        <QuickAction icon={<FileImage className="h-3.5 w-3.5" />} label="Analysis" onClick={onOpenAnalysis} disabled={!recentUpload || recentUpload.fileKind !== 'imagery'} />
+        <QuickAction icon={<ListChecks className="h-3.5 w-3.5" />} label="Jobs" onClick={onOpenJobs} />
+      </div>
+
+      <p className="border-t border-slate-700/60 px-4 py-3 text-[10px] leading-relaxed text-slate-500">
+        Cyan map shapes are OpenStreetMap building references. They provide visual context and are not legal cadastral parcels.
+      </p>
+    </section>
+  );
+}
+
+function OverviewMetric({ icon, value, label, tone }: { icon: React.ReactNode; value: string; label: string; tone: 'cyan' | 'indigo' | 'emerald' }) {
+  const tones = {
+    cyan: 'border-cyan-400/20 bg-cyan-400/5 text-cyan-300',
+    indigo: 'border-indigo-400/20 bg-indigo-400/5 text-indigo-300',
+    emerald: 'border-emerald-400/20 bg-emerald-400/5 text-emerald-300',
+  };
+  return <div className={`min-w-0 rounded-xl border p-2.5 ${tones[tone]}`}><div className="flex items-center gap-1.5">{icon}<span className="truncate text-sm font-extrabold">{value}</span></div><p className="mt-1 text-[8px] font-bold uppercase leading-tight tracking-wider text-slate-500">{label}</p></div>;
+}
+
+function QuickAction({ icon, label, onClick, primary = false, disabled = false }: { icon: React.ReactNode; label: string; onClick?: () => void; primary?: boolean; disabled?: boolean }) {
+  return <button type="button" onClick={onClick} disabled={disabled || !onClick} className={`flex min-w-0 items-center justify-center gap-1.5 rounded-xl border px-2 py-2.5 text-[10px] font-bold transition disabled:cursor-not-allowed disabled:opacity-35 ${primary ? 'border-indigo-400/35 bg-indigo-500/20 text-indigo-100 hover:bg-indigo-500/30' : 'border-slate-700 bg-slate-900/70 text-slate-300 hover:border-cyan-400/30 hover:text-cyan-200'}`}>{icon}<span className="truncate">{label}</span></button>;
 }
 
 interface ParcelCardProps {

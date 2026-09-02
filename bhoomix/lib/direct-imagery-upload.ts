@@ -88,3 +88,15 @@ export async function processStagedImagery<T>(staged: StagedImagery): Promise<T>
   if (!response.ok) throw new Error(payload.error || `Image processing failed with status ${response.status}.`);
   return payload;
 }
+
+export async function processImageryFile<T>(file: File): Promise<T> {
+  const form = new FormData();
+  form.append('file', file, file.name);
+  const response = await apiFetch('/api/process-imagery', {
+    method: 'POST',
+    body: form,
+  });
+  const payload = await response.json() as T & { error?: string };
+  if (!response.ok) throw new Error(payload.error || `Image processing failed with status ${response.status}.`);
+  return payload;
+}

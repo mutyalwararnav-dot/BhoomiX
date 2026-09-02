@@ -4,7 +4,7 @@ import { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { CheckCircle, Loader2, AlertCircle, FileJson, Image as ImageIcon } from 'lucide-react';
 import { apiFetch } from '@/lib/api-fetch';
-import { processStagedImagery, uploadImageryDirect } from '@/lib/direct-imagery-upload';
+import { processImageryFile, processStagedImagery, uploadImageryDirect } from '@/lib/direct-imagery-upload';
 
 type Status = 'idle' | 'uploading' | 'processing' | 'parsing' | 'inserting' | 'success' | 'error';
 
@@ -74,9 +74,10 @@ function GeoJSONUploadPageContent() {
   const processRawImage = async (file: File) => {
     setStatus('uploading');
     try {
-      const staged = await uploadImageryDirect(file);
       setStatus('processing');
-      const data = await processStagedImagery<{ parcelCount?: number; processingMode?: 'model' | 'demo' }>(staged);
+      const data = file.size <= 8 * 1024 * 1024
+        ? await processImageryFile<{ parcelCount?: number; processingMode?: 'model' | 'demo' }>(file)
+        : await uploadImageryDirect(file).then((staged) => processStagedImagery<{ parcelCount?: number; processingMode?: 'model' | 'demo' }>(staged));
       setParcelCount(data.parcelCount ?? 0);
       setProcessingMode(data.processingMode === 'model' ? 'model' : 'demo');
       setStatus('success');

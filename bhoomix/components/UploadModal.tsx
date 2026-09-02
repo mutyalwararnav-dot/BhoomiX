@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { UploadCloud, CheckCircle, AlertCircle, Loader2, X, FileImage, Cpu, ArrowRight } from 'lucide-react';
 import { apiFetch } from '@/lib/api-fetch';
-import { processStagedImagery, uploadImageryDirect } from '@/lib/direct-imagery-upload';
+import { processImageryFile, processStagedImagery, uploadImageryDirect } from '@/lib/direct-imagery-upload';
 import type { ImageAnnotation } from '@/lib/image-annotations';
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
@@ -28,12 +28,35 @@ export interface UploadSuccessDetails {
   processingMode: 'demo' | 'model' | null;
   isGeoreferenced: boolean;
   sourceFile: File | null;
+  analysisPreviewUrl?: string | null;
 }
 
 // ─── File validation ────────────────────────────────────────────────────────────
 const ACCEPTED_TYPES = ['application/geo+json', 'application/json'];
 const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'tif', 'tiff'];
 const MAX_BYTES       = 25 * 1024 * 1024; // Keep browser-side JSON parsing bounded
+const FAST_LOCAL_UPLOAD_BYTES = 8 * 1024 * 1024;
+const ANALYSIS_PREVIEW_EDGE = 1800;
+
+async function createAnalysisPreviewUrl(file: File) {
+  if (!['image/jpeg', 'image/png'].includes(file.type) || typeof createImageBitmap !== 'function') return null;
+  const bitmap = await createImageBitmap(file);
+  try {
+    const scale = Math.min(1, ANALYSIS_PREVIEW_EDGE / Math.max(bitmap.width, bitmap.height));
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d', { alpha: false });
+    if (!context) return null;
+    context.drawImage(bitmap, 0, 0, width, height);
+    const preview = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.86));
+    return preview ? URL.createObjectURL(preview) : null;
+  } finally {
+    bitmap.close();
+  }
+}
 
 function validateFile(file: File): string | null {
   const ext = file.name.split('.').pop()?.toLowerCase();
@@ -107,6 +130,7 @@ export default function UploadModal({ isOpen, onClose, onUploadSuccess, onViewJo
 
     if (isImagery) {
       setStage('uploading');
+      const previewPromise = createAnalysisPreviewUrl(file).catch(() => null);
       try {
         type ImageryResult = {
           uploadId?: string;
@@ -119,10 +143,17 @@ export default function UploadModal({ isOpen, onClose, onUploadSuccess, onViewJo
           georeferencing?: { isGeoreferenced?: boolean; sourceCrs?: string | null; warning?: string | null };
           error?: string;
         };
-        const staged = await uploadImageryDirect(file, setUploadProgress);
-        setUploadProgress(100);
-        setStage('processing');
-        const result = await processStagedImagery<ImageryResult>(staged);
+        let result: ImageryResult;
+        if (file.size <= FAST_LOCAL_UPLOAD_BYTES) {
+          setUploadProgress(100);
+          setStage('processing');
+          result = await processImageryFile<ImageryResult>(file);
+        } else {
+          const staged = await uploadImageryDirect(file, setUploadProgress);
+          setUploadProgress(100);
+          setStage('processing');
+          result = await processStagedImagery<ImageryResult>(staged);
+        }
 
         const insertedCount = result.parcelCount ?? 0;
         setParcelCount(insertedCount);
@@ -150,8 +181,11 @@ export default function UploadModal({ isOpen, onClose, onUploadSuccess, onViewJo
           processingMode: result.processingMode ?? null,
           isGeoreferenced: result.georeferencing?.isGeoreferenced === true,
           sourceFile: file,
+          analysisPreviewUrl: await previewPromise,
         });
       } catch (err: unknown) {
+        const unusedPreview = await previewPromise;
+        if (unusedPreview) URL.revokeObjectURL(unusedPreview);
         setErrorMsg(err instanceof Error ? err.message : 'Image processing failed.');
         setStage('error');
       } finally {
