@@ -20,6 +20,9 @@ from torchvision.transforms import functional as TF
 IMAGE_SIZE = 512
 SEED = 7492
 SOURCE_ID = re.compile(r"^(sample_\d+)_jpg\.rf\.")
+ZANZIBAR_TILE = re.compile(
+    r"^grid_\d+(?:_corrected)?_(?P<zoom>\d+)_(?P<x>\d+)_(?P<y>\d+)_img$"
+)
 
 
 def source_id(path: Path) -> str:
@@ -120,6 +123,109 @@ def prepare_manifest(
         "test": len(testing),
         "excluded_for_test_leakage": excluded_for_test_leakage,
     }, indent=2))
+
+
+def zanzibar_record(image_path: Path, mask_dir: Path, spatial_block_size: int = 8) -> dict[str, str]:
+    match = ZANZIBAR_TILE.match(image_path.stem)
+    if not match:
+        raise ValueError(f"Unexpected Zanzibar tile name: {image_path.name}")
+    mask_stem = image_path.stem.removesuffix("_img") + "_mask_buffered.png"
+    mask_path = mask_dir / mask_stem
+    if not mask_path.exists():
+        raise FileNotFoundError(f"Mask missing for {image_path}")
+    x = int(match.group("x"))
+    y = int(match.group("y"))
+    return {
+        "image": str(image_path.resolve()),
+        "mask": str(mask_path.resolve()),
+        # Adjacent web-map tiles are highly correlated. Grouping 8x8 spatial
+        # blocks prevents neighbouring views leaking across data splits.
+        "source_id": f"zanzibar-z{match.group('zoom')}-{x // spatial_block_size}-{y // spatial_block_size}",
+        "dataset": "zanzibar-building-segmentation",
+    }
+
+
+def prepare_zanzibar_manifest(
+    dataset_root: Path,
+    output: Path,
+    base_manifest_path: Path | None = None,
+    seed: int = SEED,
+    validation_size: int = 269,
+    test_size: int = 269,
+) -> None:
+    image_dir = dataset_root / "images-512"
+    mask_dir = dataset_root / "masks-512"
+    if not image_dir.is_dir() or not mask_dir.is_dir():
+        raise FileNotFoundError("Expected images-512 and masks-512 inside the Zanzibar dataset root.")
+
+    groups_by_id: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for image_path in sorted(image_dir.glob("*.jpg")):
+        record = zanzibar_record(image_path, mask_dir)
+        groups_by_id[record["source_id"]].append(record)
+    if not groups_by_id:
+        raise RuntimeError("No Zanzibar image-mask pairs were found.")
+
+    groups = list(groups_by_id.values())
+    random.Random(seed).shuffle(groups)
+    total = sum(len(group) for group in groups)
+    if validation_size <= 0 or test_size <= 0 or validation_size + test_size >= total:
+        raise ValueError("Validation and test sizes must be positive and leave training images available.")
+
+    test_groups = choose_group_subset(groups, test_size)
+    test_ids = {record["source_id"] for group in test_groups for record in group}
+    remaining_groups = [group for group in groups if group[0]["source_id"] not in test_ids]
+    validation_groups = choose_group_subset(remaining_groups, validation_size)
+    validation_ids = {record["source_id"] for group in validation_groups for record in group}
+
+    testing = [record for group in test_groups for record in group]
+    validation = [record for group in validation_groups for record in group]
+    zanzibar_training = [
+        record
+        for group in remaining_groups
+        for record in group
+        if record["source_id"] not in validation_ids
+    ]
+
+    replay_training: list[dict[str, str]] = []
+    if base_manifest_path is not None:
+        base_manifest = load_manifest(base_manifest_path)
+        replay_training = [
+            {**record, "dataset": record.get("dataset", "bhoomix-rooftop-baseline")}
+            for record in base_manifest["splits"]["train"]
+        ]
+    training = [*zanzibar_training, *replay_training]
+
+    split_ids = {
+        "train": {row["source_id"] for row in zanzibar_training},
+        "validation": {row["source_id"] for row in validation},
+        "test": {row["source_id"] for row in testing},
+    }
+    assert not (split_ids["train"] & split_ids["validation"])
+    assert not (split_ids["train"] & split_ids["test"])
+    assert not (split_ids["validation"] & split_ids["test"])
+    assert len(zanzibar_training) + len(validation) + len(testing) == total
+
+    payload = {
+        "version": 2,
+        "seed": seed,
+        "dataset_root": str(dataset_root.resolve()),
+        "image_size": IMAGE_SIZE,
+        "task": "binary_building_semantic_segmentation",
+        "spatial_grouping": "8x8 web-map tile blocks",
+        "base_manifest": str(base_manifest_path.resolve()) if base_manifest_path else None,
+        "counts": {
+            "zanzibar_total": total,
+            "zanzibar_train": len(zanzibar_training),
+            "replay_train": len(replay_training),
+            "combined_train": len(training),
+            "validation": len(validation),
+            "test": len(testing),
+        },
+        "splits": {"train": training, "validation": validation, "test": testing},
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    print(json.dumps({"manifest": str(output.resolve()), **payload["counts"]}, indent=2))
 
 
 class RooftopDataset(Dataset):
@@ -231,8 +337,8 @@ def dice_bce_loss(logits: torch.Tensor, target: torch.Tensor, pos_weight: torch.
     return 0.5 * bce + 0.5 * dice_loss
 
 
-def metric_counts(logits: torch.Tensor, target: torch.Tensor) -> tuple[int, int, int, int]:
-    prediction = torch.sigmoid(logits) >= 0.5
+def metric_counts(logits: torch.Tensor, target: torch.Tensor, threshold: float = 0.5) -> tuple[int, int, int, int]:
+    prediction = torch.sigmoid(logits) >= threshold
     truth = target >= 0.5
     return (
         int((prediction & truth).sum().item()),
@@ -254,25 +360,55 @@ def metrics_from_counts(tp: int, fp: int, fn: int, tn: int) -> dict[str, float]:
 
 
 @torch.inference_mode()
-def evaluate(model: nn.Module, loader: DataLoader, device: torch.device) -> dict[str, float]:
+def evaluate(model: nn.Module, loader: DataLoader, device: torch.device, threshold: float = 0.5) -> dict[str, float]:
     model.eval()
     counts = [0, 0, 0, 0]
     for images, masks in loader:
         logits = model(images.to(device, non_blocking=True))
-        batch_counts = metric_counts(logits, masks.to(device, non_blocking=True))
+        batch_counts = metric_counts(logits, masks.to(device, non_blocking=True), threshold)
         counts = [left + right for left, right in zip(counts, batch_counts)]
     return metrics_from_counts(*counts)
 
 
 @torch.inference_mode()
-def evaluate_per_image(model: nn.Module, records: list[dict[str, str]], device: torch.device) -> dict:
+def tune_thresholds(
+    model: nn.Module,
+    records: list[dict[str, str]],
+    device: torch.device,
+    batch_size: int,
+    thresholds: list[float],
+) -> dict[str, dict[str, float]]:
+    model.eval()
+    counts = {threshold: [0, 0, 0, 0] for threshold in thresholds}
+    for images, masks in loader(records, batch_size, augment=False, shuffle=False):
+        probability = torch.sigmoid(model(images.to(device, non_blocking=True)))
+        truth = masks.to(device, non_blocking=True) >= 0.5
+        for threshold in thresholds:
+            prediction = probability >= threshold
+            batch_counts = (
+                int((prediction & truth).sum().item()),
+                int((prediction & ~truth).sum().item()),
+                int((~prediction & truth).sum().item()),
+                int((~prediction & ~truth).sum().item()),
+            )
+            counts[threshold] = [left + right for left, right in zip(counts[threshold], batch_counts)]
+    return {f"{threshold:.2f}": metrics_from_counts(*counts[threshold]) for threshold in thresholds}
+
+
+@torch.inference_mode()
+def evaluate_per_image(
+    model: nn.Module,
+    records: list[dict[str, str]],
+    device: torch.device,
+    threshold: float = 0.5,
+) -> dict:
     model.eval()
     dataset = RooftopDataset(records, augment=False)
     rows: list[dict] = []
     total_counts = [0, 0, 0, 0]
     for record, (image, mask) in zip(records, dataset):
         logits = model(image.unsqueeze(0).to(device))
-        counts = metric_counts(logits, mask.unsqueeze(0).to(device))
+        counts = metric_counts(logits, mask.unsqueeze(0).to(device), threshold)
         total_counts = [left + right for left, right in zip(total_counts, counts)]
         metrics = metrics_from_counts(*counts)
         rows.append({
@@ -316,6 +452,7 @@ def save_error_overlays(
     image_names: list[str],
     device: torch.device,
     output_dir: Path,
+    threshold: float = 0.5,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     record_by_name = {Path(record["image"]).name: record for record in records}
@@ -323,7 +460,7 @@ def save_error_overlays(
         record = record_by_name[image_name]
         image, mask = RooftopDataset([record], augment=False)[0]
         probability = torch.sigmoid(model(image.unsqueeze(0).to(device)))[0, 0].cpu().numpy()
-        prediction = probability >= 0.5
+        prediction = probability >= threshold
         truth = mask[0].numpy() >= 0.5
         pixels = np.transpose(image.numpy(), (1, 2, 0)) * 255
         overlay = pixels.copy()
@@ -354,7 +491,13 @@ def loader(records: list[dict[str, str]], batch_size: int, augment: bool, shuffl
     )
 
 
-def train_model(manifest_path: Path, run_dir: Path, epochs: int, batch_size: int) -> None:
+def train_model(
+    manifest_path: Path,
+    run_dir: Path,
+    epochs: int,
+    batch_size: int,
+    init_checkpoint: Path | None = None,
+) -> None:
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is unavailable. GPU training is required for this baseline.")
     torch.manual_seed(SEED)
@@ -367,6 +510,9 @@ def train_model(manifest_path: Path, run_dir: Path, epochs: int, batch_size: int
     validation_loader = loader(manifest["splits"]["validation"], batch_size, augment=False, shuffle=False)
     device = torch.device("cuda")
     model = SmallUNet().to(device)
+    if init_checkpoint is not None:
+        checkpoint = torch.load(init_checkpoint, map_location=device, weights_only=True)
+        model.load_state_dict(checkpoint["model_state"])
     optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=0.5, patience=2)
     scaler = torch.amp.GradScaler("cuda")
@@ -384,6 +530,7 @@ def train_model(manifest_path: Path, run_dir: Path, epochs: int, batch_size: int
         "epochs": epochs,
         "batch_size": batch_size,
         "parameters": sum(parameter.numel() for parameter in model.parameters()),
+        "initialized_from": str(init_checkpoint.resolve()) if init_checkpoint else None,
     }, indent=2), flush=True)
 
     for epoch in range(1, epochs + 1):
@@ -425,6 +572,7 @@ def train_model(manifest_path: Path, run_dir: Path, epochs: int, batch_size: int
                 "validation_metrics": validation_metrics,
                 "image_size": IMAGE_SIZE,
                 "architecture": "small_unet_base16",
+                "initialized_from": str(init_checkpoint.resolve()) if init_checkpoint else None,
             }, run_dir / "best.pt")
         else:
             stale_epochs += 1
@@ -443,12 +591,18 @@ def load_checkpoint(checkpoint_path: Path, device: torch.device) -> SmallUNet:
     return model
 
 
-def evaluate_checkpoint(manifest_path: Path, checkpoint_path: Path, run_dir: Path, batch_size: int) -> None:
+def evaluate_checkpoint(
+    manifest_path: Path,
+    checkpoint_path: Path,
+    run_dir: Path,
+    batch_size: int,
+    threshold: float = 0.5,
+) -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     manifest = load_manifest(manifest_path)
     model = load_checkpoint(checkpoint_path, device)
-    test_metrics = evaluate(model, loader(manifest["splits"]["test"], batch_size, False, False), device)
-    detailed_metrics = evaluate_per_image(model, manifest["splits"]["test"], device)
+    test_metrics = evaluate(model, loader(manifest["splits"]["test"], batch_size, False, False), device, threshold)
+    detailed_metrics = evaluate_per_image(model, manifest["splits"]["test"], device, threshold)
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "test_metrics.json").write_text(json.dumps(test_metrics, indent=2), encoding="utf-8")
     (run_dir / "test_metrics_detailed.json").write_text(json.dumps(detailed_metrics, indent=2), encoding="utf-8")
@@ -458,8 +612,29 @@ def evaluate_checkpoint(manifest_path: Path, checkpoint_path: Path, run_dir: Pat
         [row["image"] for row in detailed_metrics["worst_images"][:6]],
         device,
         run_dir / "evaluation-overlays",
+        threshold,
     )
-    print(json.dumps({"aggregate": test_metrics, **{key: detailed_metrics[key] for key in ("image_count", "macro", "iou_distribution", "quality_bands", "worst_images")}}, indent=2))
+    print(json.dumps({"threshold": threshold, "aggregate": test_metrics, **{key: detailed_metrics[key] for key in ("image_count", "macro", "iou_distribution", "quality_bands", "worst_images")}}, indent=2))
+
+
+def tune_checkpoint_threshold(
+    manifest_path: Path,
+    checkpoint_path: Path,
+    run_dir: Path,
+    batch_size: int,
+    thresholds: list[float],
+) -> None:
+    if not thresholds or any(threshold <= 0 or threshold >= 1 for threshold in thresholds):
+        raise ValueError("Thresholds must be numbers strictly between zero and one.")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    manifest = load_manifest(manifest_path)
+    model = load_checkpoint(checkpoint_path, device)
+    results = tune_thresholds(model, manifest["splits"]["validation"], device, batch_size, thresholds)
+    best_threshold, best_metrics = max(results.items(), key=lambda item: item[1]["iou"])
+    payload = {"best_threshold": float(best_threshold), "best_metrics": best_metrics, "thresholds": results}
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "threshold_tuning.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    print(json.dumps(payload, indent=2))
 
 
 @torch.inference_mode()
@@ -546,17 +721,33 @@ def parse_args() -> argparse.Namespace:
     prepare.add_argument("--development-size", type=int, default=500, help="Use 0 to include every leakage-safe labeled image.")
     prepare.add_argument("--validation-size", type=int, default=50)
 
+    prepare_zanzibar = subparsers.add_parser("prepare-zanzibar")
+    prepare_zanzibar.add_argument("--dataset-root", type=Path, required=True)
+    prepare_zanzibar.add_argument("--manifest", type=Path, default=Path("training/prepared/zanzibar_manifest.json"))
+    prepare_zanzibar.add_argument("--base-manifest", type=Path)
+    prepare_zanzibar.add_argument("--validation-size", type=int, default=269)
+    prepare_zanzibar.add_argument("--test-size", type=int, default=269)
+
     train = subparsers.add_parser("train")
     train.add_argument("--manifest", type=Path, default=Path("training/prepared/rooftop_manifest.json"))
     train.add_argument("--run-dir", type=Path, default=Path("training/runs/rooftop-baseline"))
     train.add_argument("--epochs", type=int, default=25)
     train.add_argument("--batch-size", type=int, default=4)
+    train.add_argument("--init-checkpoint", type=Path)
 
     test = subparsers.add_parser("evaluate")
     test.add_argument("--manifest", type=Path, default=Path("training/prepared/rooftop_manifest.json"))
     test.add_argument("--checkpoint", type=Path, default=Path("training/runs/rooftop-baseline/best.pt"))
     test.add_argument("--run-dir", type=Path, default=Path("training/runs/rooftop-baseline"))
     test.add_argument("--batch-size", type=int, default=4)
+    test.add_argument("--threshold", type=float, default=0.5)
+
+    tune = subparsers.add_parser("tune-threshold")
+    tune.add_argument("--manifest", type=Path, required=True)
+    tune.add_argument("--checkpoint", type=Path, required=True)
+    tune.add_argument("--run-dir", type=Path, required=True)
+    tune.add_argument("--batch-size", type=int, default=4)
+    tune.add_argument("--thresholds", default="0.35,0.40,0.45,0.50,0.55,0.60,0.65,0.70")
 
     predict = subparsers.add_parser("predict")
     predict.add_argument("--checkpoint", type=Path, default=Path("training/runs/rooftop-baseline/best.pt"))
@@ -571,10 +762,26 @@ def main() -> None:
     args = parse_args()
     if args.command == "prepare":
         prepare_manifest(args.dataset_root, args.manifest, development_size=args.development_size, validation_size=args.validation_size)
+    elif args.command == "prepare-zanzibar":
+        prepare_zanzibar_manifest(
+            args.dataset_root,
+            args.manifest,
+            base_manifest_path=args.base_manifest,
+            validation_size=args.validation_size,
+            test_size=args.test_size,
+        )
     elif args.command == "train":
-        train_model(args.manifest, args.run_dir, args.epochs, args.batch_size)
+        train_model(args.manifest, args.run_dir, args.epochs, args.batch_size, args.init_checkpoint)
     elif args.command == "evaluate":
-        evaluate_checkpoint(args.manifest, args.checkpoint, args.run_dir, args.batch_size)
+        evaluate_checkpoint(args.manifest, args.checkpoint, args.run_dir, args.batch_size, args.threshold)
+    elif args.command == "tune-threshold":
+        tune_checkpoint_threshold(
+            args.manifest,
+            args.checkpoint,
+            args.run_dir,
+            args.batch_size,
+            [float(value.strip()) for value in args.thresholds.split(",") if value.strip()],
+        )
     elif args.command == "predict":
         predict_image(args.checkpoint, args.image, args.output_dir, args.threshold, args.min_area)
 

@@ -23,6 +23,7 @@ MAX_IMAGE_BYTES = 25 * 1024 * 1024
 MAX_ELEVATION_BYTES = 100 * 1024 * 1024
 THRESHOLD = float(os.getenv("ROOFTOP_MODEL_THRESHOLD", "0.50"))
 MIN_AREA = int(os.getenv("ROOFTOP_MODEL_MIN_AREA", "300"))
+MODEL_VERSION = os.getenv("AI_MODEL_VERSION", "bhoomix-rooftop-unet-v1")
 # Training resized complete 1024x1024 source scenes to IMAGE_SIZE (512).
 # Keep that scene scale at inference time instead of feeding 2x-zoomed 512px crops.
 TILE_SIZE = int(os.getenv("ROOFTOP_MODEL_TILE_SIZE", "1024"))
@@ -43,7 +44,9 @@ app = FastAPI(title="BhoomiX Rooftop Inference", version="0.1.0")
 def tile_starts(length: int, tile_size: int) -> list[int]:
     if length <= tile_size:
         return [0]
-    stride = tile_size // 2
+    # A 25% overlap preserves context at tile seams while avoiding the large
+    # duplicate-compute cost of the previous 50% overlap.
+    stride = max(1, (tile_size * 3) // 4)
     return sorted(set([*range(0, length - tile_size + 1, stride), length - tile_size]))
 
 
@@ -75,7 +78,6 @@ def predict_polygons(image: Image.Image) -> list[dict]:
     binary = (probability >= THRESHOLD).astype(np.uint8) * 255
     kernel = np.ones((3, 3), np.uint8)
     binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
-    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     polygons: list[dict] = []
@@ -84,8 +86,25 @@ def predict_polygons(image: Image.Image) -> list[dict]:
         area = float(cv2.contourArea(contour))
         if area < MIN_AREA:
             continue
+        x, y, box_width, box_height = cv2.boundingRect(contour)
+        # Predictions cut by the image boundary are incomplete shapes and
+        # should not be presented to a surveyor as whole building footprints.
+        border_margin = 2
+        if (
+            x <= border_margin
+            or y <= border_margin
+            or x + box_width >= width - border_margin
+            or y + box_height >= height - border_margin
+        ):
+            continue
+        if box_width < 4 or box_height < 4 or area / float(box_width * box_height) < 0.12:
+            continue
         perimeter = cv2.arcLength(contour, True)
-        points = cv2.approxPolyDP(contour, max(2.0, perimeter * 0.008), True).reshape(-1, 2)
+        epsilon = max(2.0, perimeter * 0.006)
+        points = cv2.approxPolyDP(contour, epsilon, True).reshape(-1, 2)
+        while len(points) > 100:
+            epsilon *= 1.25
+            points = cv2.approxPolyDP(contour, epsilon, True).reshape(-1, 2)
         if len(points) < 3:
             continue
         region_mask = np.zeros((height, width), dtype=np.uint8)
@@ -107,6 +126,7 @@ def health() -> dict:
         "task": "rooftop_segmentation",
         "device": torch.cuda.get_device_name(0),
         "checkpoint": CHECKPOINT_PATH.name,
+        "model": MODEL_VERSION,
         "threshold": THRESHOLD,
         "tile_size": TILE_SIZE,
         "capabilities": ["rgb_rooftop_inference", "ori_dsm_dtm_validation", "ndsm_generation"],
@@ -131,7 +151,7 @@ async def predict(file: UploadFile = File(...)) -> dict:
     polygons = predict_polygons(image)
     return {
         "image_predictions": polygons,
-        "model": "bhoomix-rooftop-unet-v1",
+        "model": MODEL_VERSION,
         "task": "rooftop_segmentation",
         "prediction_count": len(polygons),
     }

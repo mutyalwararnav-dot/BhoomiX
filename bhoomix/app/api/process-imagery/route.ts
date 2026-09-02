@@ -295,14 +295,17 @@ export async function POST(request: Request) {
     trackedJobId = jobId;
 
     // ── 3b. Mark as processing_ai ───────────────────────────────────────────
-    await supabase
-      .from('drone_uploads')
-      .update({ status: 'processing_ai' })
-      .eq('id', uploadId);
-    await supabase
-      .from('imagery_processing_jobs')
-      .update({ status: 'processing', progress: 20, started_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-      .eq('id', jobId);
+    const processingStartedAt = new Date().toISOString();
+    await Promise.all([
+      supabase
+        .from('drone_uploads')
+        .update({ status: 'processing_ai' })
+        .eq('id', uploadId),
+      supabase
+        .from('imagery_processing_jobs')
+        .update({ status: 'processing', progress: 20, started_at: processingStartedAt, updated_at: processingStartedAt })
+        .eq('id', jobId),
+    ]);
 
     // ── 4. Run model inference ──────────────────────────────────────────────
     let inferredParcels: InferredParcel[] = [];
@@ -366,12 +369,17 @@ export async function POST(request: Request) {
           },
         }
       : uploadMetadata;
-    await supabase
-      .from('drone_uploads')
-      .update({ status: 'ready', error_message: null, completed_at: new Date().toISOString(), metadata: processedMetadata })
-      .eq('id', uploadId);
-
-    await supabase.from('imagery_processing_jobs').update({ progress: 85, updated_at: new Date().toISOString() }).eq('id', jobId);
+    const processingFinishedAt = new Date().toISOString();
+    await Promise.all([
+      supabase
+        .from('drone_uploads')
+        .update({ status: 'ready', error_message: null, completed_at: processingFinishedAt, metadata: processedMetadata })
+        .eq('id', uploadId),
+      supabase
+        .from('imagery_processing_jobs')
+        .update({ progress: 85, updated_at: processingFinishedAt })
+        .eq('id', jobId),
+    ]);
 
     // ── 7. Spatial validation ───────────────────────────────────────────────
     // Run the PostGIS overlap scan on ALL ai_suggestion parcels.
@@ -423,6 +431,10 @@ export async function POST(request: Request) {
       jobStatus:     'completed',
       parcelCount:   inferredParcels.length,
       imageAnnotationCount: imageAnnotations.length,
+      // The browser already waited for inference, so return these results with
+      // the completion response instead of forcing Image Analysis to fetch the
+      // same JSON from Supabase again.
+      imageAnnotations,
       conflictCount, // number of overlap pairs detected — may be 0
       processingMode,
       georeferencing: {

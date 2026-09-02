@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { supabase, type ParcelFeature } from '@/lib/supabase';
+import type { ParcelFeature } from '@/lib/supabase';
 import { Crosshair, Check, X, Loader2, PenLine, ShieldAlert, ScanSearch, Search } from 'lucide-react';
 import { apiFetch } from '@/lib/api-fetch';
+import { fetchActiveParcels } from '@/lib/parcels-client';
 
 interface TriageSidebarProps {
   onFlyTo?: (parcel: ParcelFeature | null) => void;
@@ -31,19 +32,24 @@ export default function TriageSidebar({
   } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [queueFilter, setQueueFilter] = useState<'all' | 'conflict' | 'ai_suggestion'>('all');
+  const [legacyHiddenCount, setLegacyHiddenCount] = useState(0);
+
+  const replaceParcels = (payload: Awaited<ReturnType<typeof fetchActiveParcels>>) => {
+    const triageParcels = (payload.geojson.features as ParcelFeature[]).filter(
+      (feature) => feature.properties.status === 'ai_suggestion' || feature.properties.status === 'conflict'
+    );
+    setParcels(triageParcels);
+    setLegacyHiddenCount(payload.legacyHiddenCount);
+  };
 
   useEffect(() => {
     async function loadParcels() {
       setIsLoading(true);
-      const { data, error } = await supabase.rpc('get_parcels_as_geojson');
-      if (error) {
-        console.error('[BhoomiX] Sidebar fetch error:', error.message);
-      } else if (data) {
-        const fc = data as GeoJSON.FeatureCollection<GeoJSON.Polygon>;
-        const triageParcels = (fc.features as ParcelFeature[]).filter(
-          (f) => f.properties.status === 'ai_suggestion' || f.properties.status === 'conflict'
-        );
-        setParcels(triageParcels);
+      try {
+        replaceParcels(await fetchActiveParcels());
+      } catch (error) {
+        console.error('[BhoomiX] Sidebar fetch error:', error);
+        setParcels([]);
       }
       setIsLoading(false);
     }
@@ -68,13 +74,7 @@ export default function TriageSidebar({
           : `Validation complete — ${count} overlap${count === 1 ? '' : 's'} found.`,
       });
 
-      const { data: fresh, error } = await supabase.rpc('get_parcels_as_geojson');
-      if (!error && fresh) {
-        const fc = fresh as GeoJSON.FeatureCollection<GeoJSON.Polygon>;
-        setParcels((fc.features as ParcelFeature[]).filter(
-          f => f.properties.status === 'ai_suggestion' || f.properties.status === 'conflict'
-        ));
-      }
+      replaceParcels(await fetchActiveParcels());
     } catch (e) {
       console.error('[TriageSidebar] Validation error:', e);
       setValidationNotice({
@@ -253,6 +253,12 @@ export default function TriageSidebar({
                 <Search className="mx-auto mb-2 h-5 w-5 text-slate-600" />
                 <p className="text-xs font-medium text-slate-400">No matching parcels</p>
                 <button type="button" onClick={() => { setSearchQuery(''); setQueueFilter('all'); }} className="mt-2 text-[11px] font-semibold text-indigo-300 hover:text-indigo-200">Clear search and filters</button>
+              </div>
+            )}
+
+            {parcels.length === 0 && legacyHiddenCount > 0 && (
+              <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 px-4 py-4 text-xs leading-5 text-slate-400">
+                {legacyHiddenCount} legacy demo/test parcel{legacyHiddenCount === 1 ? ' is' : 's are'} hidden because they are not linked to verified geospatial imagery. Upload georeferenced GeoJSON or run the model on a georeferenced GeoTIFF to populate this queue accurately.
               </div>
             )}
           </>

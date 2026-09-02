@@ -3,7 +3,8 @@ import 'server-only';
 import { validateGeoJsonPolygon } from '@/lib/geometry';
 import { validateImageAnnotations, type ImageAnnotation, type ImageAnnotationPoint } from '@/lib/image-annotations';
 
-const MAX_MODEL_PARCELS = 1000;
+// Keep this aligned with the annotation persistence and rendering limits.
+const MAX_MODEL_PARCELS = 500;
 const DEFAULT_TIMEOUT_MS = 120_000;
 
 interface ModelPrediction {

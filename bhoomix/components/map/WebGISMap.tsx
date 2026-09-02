@@ -6,9 +6,9 @@ import {
 } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { supabase } from '@/lib/supabase';
 import type { ParcelFeature } from '@/lib/supabase';
 import { normalizeLinearRing, type LngLatCoordinate } from '@/lib/geometry';
+import { fetchActiveParcels } from '@/lib/parcels-client';
 
 const STATUS_COLOR: Record<string, string> = {
   ai_suggestion:   '#F59E0B',
@@ -27,11 +27,13 @@ const EDIT_POLY_SOURCE = 'bhoomix-edit-poly-source';
 const EDIT_LINE_SOURCE = 'bhoomix-edit-line-source';
 const EDIT_FILL        = 'bhoomix-edit-fill';
 const EDIT_STROKE      = 'bhoomix-edit-stroke';
-const OPENFREEMAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 const IMAGERY_SOURCE_PREFIX = 'bhoomix-imagery-source-';
 const IMAGERY_LAYER_PREFIX = 'bhoomix-imagery-layer-';
 const ELEVATION_SOURCE_ID = 'bhoomix-ndsm-source';
 const ELEVATION_LAYER_ID = 'bhoomix-ndsm-layer';
+const REFERENCE_SOURCE_ID = 'bhoomix-reference-buildings';
+const REFERENCE_FILL_LAYER = 'reference-buildings-fill';
+const REFERENCE_STROKE_LAYER = 'reference-buildings-stroke';
 
 interface ImageryFootprint {
   id: string;
@@ -78,6 +80,8 @@ interface WebGISMapProps {
   selectedParcel?: ParcelFeature | null;
   parcelVersion?: number;
   onParcelSelect?: (parcel: ParcelFeature) => void;
+  onParcelCountChange?: (count: number | null) => void;
+  onReferenceBuildingCountChange?: (count: number) => void;
   elevationLayer?: {
     previewUrl: string;
     boundingBox: [number, number, number, number];
@@ -206,6 +210,40 @@ function ensureImageryLayers(map: maplibregl.Map, imagery: ImageryFootprint[]) {
   });
 }
 
+function ensureReferenceBuildingLayers(
+  map: maplibregl.Map,
+  buildings: GeoJSON.FeatureCollection<GeoJSON.Polygon>,
+) {
+  if (!map || !map.getStyle() || buildings.features.length === 0) return;
+
+  try {
+    const source = map.getSource(REFERENCE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+    if (source) {
+      source.setData(buildings);
+    } else {
+      map.addSource(REFERENCE_SOURCE_ID, { type: 'geojson', data: buildings });
+    }
+    if (!map.getLayer(REFERENCE_FILL_LAYER)) {
+      map.addLayer({
+        id: REFERENCE_FILL_LAYER,
+        type: 'fill',
+        source: REFERENCE_SOURCE_ID,
+        paint: { 'fill-color': '#22D3EE', 'fill-opacity': 0.16 },
+      }, map.getLayer(FILL_LAYER) ? FILL_LAYER : undefined);
+    }
+    if (!map.getLayer(REFERENCE_STROKE_LAYER)) {
+      map.addLayer({
+        id: REFERENCE_STROKE_LAYER,
+        type: 'line',
+        source: REFERENCE_SOURCE_ID,
+        paint: { 'line-color': '#0891B2', 'line-width': 1.4, 'line-opacity': 0.9 },
+      }, map.getLayer(FILL_LAYER) ? FILL_LAYER : undefined);
+    }
+  } catch (error) {
+    console.warn('[WebGISMap] Could not render reference building footprints:', error);
+  }
+}
+
 function setElevationLayer(
   map: maplibregl.Map,
   layer: WebGISMapProps['elevationLayer'],
@@ -257,7 +295,7 @@ function ensureEditLayers(map: maplibregl.Map) {
 }
 
 const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
-  ({ selectedParcel, parcelVersion = 0, onParcelSelect, elevationLayer = null }, ref) => {
+  ({ selectedParcel, parcelVersion = 0, onParcelSelect, onParcelCountChange, onReferenceBuildingCountChange, elevationLayer = null }, ref) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapRef       = useRef<maplibregl.Map | null>(null);
 
@@ -268,13 +306,19 @@ const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
       features: [],
     });
     const imageryRef = useRef<ImageryFootprint[]>([]);
+    const referenceBuildingsRef = useRef<GeoJSON.FeatureCollection<GeoJSON.Polygon>>({
+      type: 'FeatureCollection',
+      features: [],
+    });
 
     const [isLoading, setIsLoading] = useState(true);
     const [mapReady, setMapReady]   = useState(false);
     const [parcelPaths, setParcelPaths] = useState<RenderedParcelPath[]>([]);
+    const [referencePaths, setReferencePaths] = useState<RenderedParcelPath[]>([]);
     const [editPath, setEditPath] = useState<string | null>(null);
     const [basemapWarning, setBasemapWarning] = useState<string | null>(null);
     const [imageryCount, setImageryCount] = useState(0);
+    const [referenceBuildingCount, setReferenceBuildingCount] = useState(0);
 
     useImperativeHandle(ref, () => ({
       getEditedGeometry: () => {
@@ -287,15 +331,20 @@ const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
     }));
 
     const fetchParcels = useCallback(async (): Promise<GeoJSON.FeatureCollection> => {
-      const { data, error } = await supabase.rpc('get_parcels_as_geojson');
-      if (error) return { type: 'FeatureCollection', features: [] };
-
-      let parsedData = data;
-      if (typeof data === 'string') {
-        try { parsedData = JSON.parse(data); } catch {}
+      try {
+        const geojson = (await fetchActiveParcels()).geojson;
+        const visibleCount = geojson.features.filter((feature) => (
+          feature.geometry?.type === 'Polygon'
+          && (feature as ParcelFeature).properties?.status !== 'rejected'
+        )).length;
+        onParcelCountChange?.(visibleCount);
+        return geojson;
+      } catch (error) {
+        console.error('[WebGISMap] Parcel loading failed:', error);
+        onParcelCountChange?.(null);
+        return { type: 'FeatureCollection', features: [] };
       }
-      return (parsedData as GeoJSON.FeatureCollection) ?? { type: 'FeatureCollection', features: [] };
-    }, []);
+    }, [onParcelCountChange]);
 
     const fetchImagery = useCallback(async (): Promise<ImageryFootprint[]> => {
       try {
@@ -319,8 +368,24 @@ const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
       }
     }, []);
 
+    const fetchReferenceBuildings = useCallback(async (): Promise<GeoJSON.FeatureCollection<GeoJSON.Polygon>> => {
+      try {
+        const response = await fetch('/api/reference-buildings', { cache: 'no-store' });
+        const payload = await response.json() as {
+          geojson?: GeoJSON.FeatureCollection<GeoJSON.Polygon>;
+        };
+        if (!response.ok || payload.geojson?.type !== 'FeatureCollection' || !Array.isArray(payload.geojson.features)) {
+          return { type: 'FeatureCollection', features: [] };
+        }
+        return payload.geojson;
+      } catch {
+        return { type: 'FeatureCollection', features: [] };
+      }
+    }, []);
+
     const refreshSvgOverlay = useCallback((map: maplibregl.Map) => {
       const nextPaths: RenderedParcelPath[] = [];
+      const nextReferencePaths: RenderedParcelPath[] = [];
 
       parcelDataRef.current.features.forEach((feature, index) => {
         if (feature.geometry?.type !== 'Polygon') return;
@@ -339,7 +404,21 @@ const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
         }
       });
 
+      referenceBuildingsRef.current.features.forEach((feature, index) => {
+        try {
+          const ring = normalizeLinearRing(feature.geometry.coordinates[0]);
+          nextReferencePaths.push({
+            key: String(feature.id ?? `reference-${index}`),
+            path: ringToScreenPath(map, ring),
+            color: '#06B6D4',
+          });
+        } catch {
+          // Skip malformed third-party reference geometry.
+        }
+      });
+
       setParcelPaths(nextPaths);
+      setReferencePaths(nextReferencePaths);
       setEditPath(currentCoordsRef.current
         ? ringToScreenPath(map, currentCoordsRef.current)
         : null);
@@ -351,29 +430,21 @@ const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
 
       let cancelled = false;
       let warningTimer: ReturnType<typeof setTimeout> | null = null;
-      let usingFallbackStyle = false;
+      const usingFallbackStyle = true;
+      let operationalDataLoading = false;
+      let operationalDataLoaded = false;
       setIsLoading(true);
       setMapReady(false);
       setBasemapWarning(null);
 
       const map = new maplibregl.Map({
         container: mapContainer.current,
-        style: OPENFREEMAP_STYLE,
+        style: createFallbackStyle(),
         center: [73.8567, 18.5204],
         zoom: 13,
       });
 
       mapRef.current = map;
-      const failsafe = setTimeout(() => {
-        if (cancelled || map.isStyleLoaded()) return;
-        usingFallbackStyle = true;
-        if (warningTimer) {
-          clearTimeout(warningTimer);
-          warningTimer = null;
-        }
-        setBasemapWarning('Primary basemap unavailable. Using OpenStreetMap fallback tiles.');
-        map.setStyle(createFallbackStyle());
-      }, 8000);
 
       const handleMapError = (event: maplibregl.ErrorEvent) => {
         if (cancelled) return;
@@ -393,8 +464,9 @@ const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
 
       map.on('error', handleMapError);
 
-      map.on('load', async () => {
-        clearTimeout(failsafe);
+      const loadOperationalData = async () => {
+        if (operationalDataLoading || operationalDataLoaded || cancelled) return;
+        operationalDataLoading = true;
         if (cancelled || mapRef.current !== map) return;
 
         const [geojson, imagery] = await Promise.all([fetchParcels(), fetchImagery()]);
@@ -409,12 +481,21 @@ const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
 
         setIsLoading(false);
         setMapReady(true);
+        operationalDataLoaded = true;
+        operationalDataLoading = false;
         refreshSvgOverlay(map);
-      });
+      };
+
+      map.on('load', () => { void loadOperationalData(); });
 
       map.on('style.load', () => {
-        if (cancelled || parcelDataRef.current.features.length === 0) return;
+        if (cancelled) return;
+        if (!operationalDataLoaded) {
+          void loadOperationalData();
+          return;
+        }
         ensureBackgroundLayers(map, parcelDataRef.current);
+        ensureReferenceBuildingLayers(map, referenceBuildingsRef.current);
         ensureImageryLayers(map, imageryRef.current);
         ensureEditLayers(map);
         refreshSvgOverlay(map);
@@ -422,7 +503,6 @@ const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
 
       return () => {
         cancelled = true;
-        clearTimeout(failsafe);
         if (warningTimer) clearTimeout(warningTimer);
         map.off('error', handleMapError);
         setMapReady(false);
@@ -432,6 +512,29 @@ const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
         map.remove();
       };
     }, [fetchImagery, fetchParcels, refreshSvgOverlay]);
+
+    useEffect(() => {
+      if (!mapReady || !mapRef.current) return;
+      let cancelled = false;
+      const map = mapRef.current;
+
+      void fetchReferenceBuildings().then((buildings) => {
+        if (cancelled || mapRef.current !== map || !map.getStyle()) return;
+        referenceBuildingsRef.current = buildings;
+        setReferenceBuildingCount(buildings.features.length);
+        onReferenceBuildingCountChange?.(buildings.features.length);
+        ensureReferenceBuildingLayers(map, buildings);
+        refreshSvgOverlay(map);
+        if (buildings.features.length > 0 && parcelDataRef.current.features.length === 0) {
+          map.fitBounds(
+            [[73.853, 18.5175], [73.861, 18.5235]],
+            { padding: 64, duration: 800, maxZoom: 16 },
+          );
+        }
+      });
+
+      return () => { cancelled = true; };
+    }, [fetchReferenceBuildings, mapReady, onReferenceBuildingCountChange, refreshSvgOverlay]);
 
     // 2. Refresh Background Data
     useEffect(() => {
@@ -463,10 +566,6 @@ const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
       if (!map || !mapReady || !map.getStyle()) return;
       try {
         setElevationLayer(map, elevationLayer);
-        if (elevationLayer) {
-          const [west, south, east, north] = elevationLayer.boundingBox;
-          map.fitBounds([[west, south], [east, north]], { padding: 48, duration: 900 });
-        }
       } catch (error) {
         console.warn('[WebGISMap] Could not display the nDSM layer:', error);
       }
@@ -656,6 +755,19 @@ const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
           className="absolute inset-0 z-[2] w-full h-full pointer-events-none"
           aria-hidden="true"
         >
+          {referencePaths.map(referencePath => (
+            <path
+              key={referencePath.key}
+              d={referencePath.path}
+              fill={referencePath.color}
+              fillOpacity="0.1"
+              stroke={referencePath.color}
+              strokeOpacity="0.9"
+              strokeWidth="1.25"
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
+
           {parcelPaths.map(parcelPath => (
             <path
               key={parcelPath.key}
@@ -712,6 +824,12 @@ const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
               <div className="flex items-center gap-3 mb-1.5 border-b border-slate-700 pb-1.5">
                 <div className="w-3 h-3 rounded-sm flex-shrink-0 bg-cyan-300/70 ring-1 ring-cyan-200" />
                 <span className="text-[10px] text-cyan-200">Drone imagery ({imageryCount})</span>
+              </div>
+            )}
+            {referenceBuildingCount > 0 && (
+              <div className="mb-1.5 flex items-center gap-3 border-b border-slate-700 pb-1.5">
+                <div className="h-3 w-3 flex-shrink-0 rounded-sm border border-cyan-500 bg-cyan-300/20" />
+                <span className="text-[10px] text-cyan-200">OSM reference buildings ({referenceBuildingCount})</span>
               </div>
             )}
             {elevationLayer && (

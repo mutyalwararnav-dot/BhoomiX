@@ -4,6 +4,7 @@ import { useState, useRef, useCallback } from 'react';
 import { UploadCloud, CheckCircle, AlertCircle, Loader2, X, FileImage, Cpu, ArrowRight } from 'lucide-react';
 import { apiFetch } from '@/lib/api-fetch';
 import { processStagedImagery, uploadImageryDirect } from '@/lib/direct-imagery-upload';
+import type { ImageAnnotation } from '@/lib/image-annotations';
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 type UploadStage = 'idle' | 'validating' | 'uploading' | 'processing' | 'done' | 'error';
@@ -22,6 +23,7 @@ export interface UploadSuccessDetails {
   fileKind: 'geojson' | 'imagery';
   parcelCount: number;
   imageAnnotationCount?: number;
+  imageAnnotations?: ImageAnnotation[];
   jobId: string | null;
   processingMode: 'demo' | 'model' | null;
   isGeoreferenced: boolean;
@@ -110,6 +112,7 @@ export default function UploadModal({ isOpen, onClose, onUploadSuccess, onViewJo
           uploadId?: string;
           parcelCount?: number;
           imageAnnotationCount?: number;
+          imageAnnotations?: ImageAnnotation[];
           jobId?: string;
           processingMode?: 'demo' | 'model';
           processingNotice?: string | null;
@@ -142,6 +145,7 @@ export default function UploadModal({ isOpen, onClose, onUploadSuccess, onViewJo
           fileKind: 'imagery',
           parcelCount: insertedCount,
           imageAnnotationCount: result.imageAnnotationCount ?? 0,
+          imageAnnotations: result.imageAnnotations ?? [],
           jobId: result.jobId ?? null,
           processingMode: result.processingMode ?? null,
           isGeoreferenced: result.georeferencing?.isGeoreferenced === true,
@@ -196,6 +200,7 @@ export default function UploadModal({ isOpen, onClose, onUploadSuccess, onViewJo
         fileKind: 'geojson',
         parcelCount: insertedCount,
         imageAnnotationCount: 0,
+        imageAnnotations: [],
         jobId: null,
         processingMode: null,
         isGeoreferenced: false,

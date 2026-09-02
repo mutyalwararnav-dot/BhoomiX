@@ -5,8 +5,8 @@ import { contentLengthError, internalServerError, mutationRequestError, rateLimi
 // POST /api/validate-parcels
 // Body (optional): { tolerance_sqm?: number }
 //
-// Calls the `flag_overlapping_parcels` PostGIS function which:
-//   • Scans all ai_suggestion parcel pairs for physical intersection
+// Calls the `flag_active_overlapping_parcels` PostGIS function which:
+//   • Scans georeferenced model/imported parcel pairs for intersection
 //   • Promotes both parcels to 'conflict' if overlap > tolerance_sqm
 //   • Returns the list of conflicting pairs for the caller to log
 //
@@ -21,7 +21,32 @@ async function runValidation(toleranceSqm: number) {
       );
     }
 
-    const { data, error } = await supabase.rpc('flag_overlapping_parcels', {
+    // Avoid calling the spatial RPC when the only stored geometry is legacy
+    // demo/test data. This keeps an empty production queue valid even before
+    // migration 11 has been applied.
+    const [importedCountResult, modelCountResult] = await Promise.all([
+      supabase
+        .from('parcels')
+        .select('id', { count: 'exact', head: true })
+        .eq('source_type', 'imported')
+        .eq('status', 'ai_suggestion'),
+      supabase
+        .from('parcels')
+        .select('id', { count: 'exact', head: true })
+        .eq('source_type', 'model')
+        .not('source_upload_id', 'is', null)
+        .eq('status', 'ai_suggestion'),
+    ]);
+    const countError = importedCountResult.error || modelCountResult.error;
+    if (countError) {
+      console.error('[ValidateParcels] Active parcel lookup failed:', countError.message);
+      return internalServerError('Spatial validation could not be completed.');
+    }
+    if ((importedCountResult.count ?? 0) + (modelCountResult.count ?? 0) < 2) {
+      return NextResponse.json({ success: true, conflict_pairs: [], conflict_count: 0 });
+    }
+
+    const { data, error } = await supabase.rpc('flag_active_overlapping_parcels', {
       p_tolerance_sqm: toleranceSqm,
     });
 

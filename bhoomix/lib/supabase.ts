@@ -40,6 +40,9 @@ export interface Parcel {
   computed_area_sqm: number | null;
   land_use: string | null;
   geometry: GeoJSON.Polygon;
+  source_type?: 'model' | 'imported' | 'demo' | 'unknown';
+  source_upload_id?: string | null;
+  model_version?: string | null;
 }
 
 export interface ParcelAuditEntry {
@@ -60,5 +63,8 @@ export interface ParcelFeature extends GeoJSON.Feature<GeoJSON.Polygon> {
     confidence_score: number | null;
     computed_area_sqm: number | null;
     land_use: string | null;
+    source_type?: 'model' | 'imported' | 'demo' | 'unknown';
+    source_upload_id?: string | null;
+    model_version?: string | null;
   };
 }

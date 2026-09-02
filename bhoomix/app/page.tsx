@@ -43,6 +43,8 @@ function Dashboard() {
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [isElevationOpen, setIsElevationOpen] = useState(false);
   const [elevationLayer, setElevationLayer] = useState<ElevationLayerResult | null>(null);
+  const [activeParcelCount, setActiveParcelCount] = useState<number | null>(null);
+  const [referenceBuildingCount, setReferenceBuildingCount] = useState(0);
 
   useEffect(() => {
     return () => {
@@ -100,6 +102,10 @@ function Dashboard() {
     setEditingParcelId(null);
   }, []);
 
+  const latestBoundaryCount = latestUpload
+    ? (latestUpload.imageAnnotationCount ?? 0) + latestUpload.parcelCount
+    : 0;
+
   const openStoredAnalysis = useCallback(async (requestedJob?: ProcessingJob) => {
     if (analysisImageUrl && latestUpload?.fileKind === 'imagery' && (!requestedJob || requestedJob.upload?.id === latestUpload.uploadId)) {
       setIsJobsOpen(false);
@@ -135,6 +141,7 @@ function Dashboard() {
         fileKind: 'imagery',
         parcelCount: job.parcel_count,
         imageAnnotationCount: job.parcel_count,
+        imageAnnotations: [],
         jobId: job.id,
         processingMode: job.processing_mode,
         isGeoreferenced: false,
@@ -303,9 +310,65 @@ function Dashboard() {
             selectedParcel={editingParcelId ? selectedParcel : null}
             parcelVersion={parcelVersion}
             onParcelSelect={handleMapParcelSelect}
+            onParcelCountChange={setActiveParcelCount}
+            onReferenceBuildingCountChange={setReferenceBuildingCount}
             elevationLayer={elevationLayer}
           />
-          {latestUpload && (
+          {activeParcelCount === 0 && referenceBuildingCount === 0 && (
+            <section className="bhoomix-glass absolute left-1/2 top-1/2 z-10 w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-3xl border border-cyan-400/25 p-5 shadow-2xl backdrop-blur-xl sm:p-6">
+              <div className="flex items-start gap-4">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-cyan-400/25 bg-cyan-400/10 text-cyan-300 shadow-lg shadow-cyan-950/20">
+                  <MapPin className="h-5 w-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-300">Map workspace ready</p>
+                  <h2 className="mt-1 text-lg font-bold text-white">No georeferenced parcels yet</h2>
+                  <p className="mt-2 text-sm leading-relaxed text-slate-400">
+                    {latestUpload?.fileKind === 'imagery'
+                      ? `BhoomiX detected ${latestBoundaryCount} building boundar${latestBoundaryCount === 1 ? 'y' : 'ies'} in ${latestUpload.filename}, but the image has no map coordinates. The results remain safely available in Image Analysis.`
+                      : 'This map intentionally shows only parcels backed by real coordinates. Upload GeoJSON or a georeferenced GeoTIFF to begin the mapped review workflow.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-5 grid grid-cols-3 gap-2">
+                <div className="rounded-xl border border-slate-700/70 bg-slate-950/45 px-3 py-2.5">
+                  <p className="text-lg font-extrabold text-cyan-300">{latestBoundaryCount}</p>
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Image detections</p>
+                </div>
+                <div className="rounded-xl border border-slate-700/70 bg-slate-950/45 px-3 py-2.5">
+                  <p className="text-lg font-extrabold text-white">0</p>
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Mapped parcels</p>
+                </div>
+                <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-2.5">
+                  <p className="text-lg font-extrabold text-emerald-300">Safe</p>
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Coordinate checks</p>
+                </div>
+              </div>
+
+              <div className="mt-5 flex flex-wrap gap-2">
+                {latestUpload?.fileKind === 'imagery' && (
+                  <button
+                    type="button"
+                    onClick={() => void openStoredAnalysis()}
+                    disabled={analysisLoading}
+                    className="bhoomix-primary-action disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {analysisLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ScanSearch className="h-3.5 w-3.5" />}
+                    Review {latestBoundaryCount} detections
+                  </button>
+                )}
+                <button type="button" onClick={() => setIsUploadOpen(true)} className="bhoomix-toolbar-button border-cyan-500/30 text-cyan-200">
+                  <Upload className="h-3.5 w-3.5" /> Upload mapped data
+                </button>
+              </div>
+
+              <p className="mt-4 border-t border-slate-700/60 pt-3 text-[11px] leading-relaxed text-slate-500">
+                Supported map inputs: georeferenced GeoTIFF imagery or GeoJSON polygons. BhoomiX will never guess the position of a normal JPG or PNG.
+              </p>
+            </section>
+          )}
+          {latestUpload && activeParcelCount !== 0 && (
             <aside className="bhoomix-glass absolute bottom-4 right-4 z-20 w-[min(24rem,calc(100%-2rem))] rounded-2xl border border-cyan-400/25 p-4 shadow-2xl">
               <div className="flex items-start gap-3">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-cyan-400/20 bg-cyan-400/10 text-cyan-300">
@@ -390,6 +453,7 @@ function Dashboard() {
           filename={latestUpload.filename}
           imageUrl={analysisImageUrl}
           processingMode={latestUpload.processingMode}
+          initialAnnotations={latestUpload.imageAnnotations}
           onClose={() => setIsAnalysisOpen(false)}
         />
       )}

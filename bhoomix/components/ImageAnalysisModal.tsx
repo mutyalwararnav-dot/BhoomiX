@@ -10,6 +10,7 @@ interface ImageAnalysisModalProps {
   filename: string;
   imageUrl: string;
   processingMode: 'demo' | 'model' | null;
+  initialAnnotations?: ImageAnnotation[];
   onClose: () => void;
 }
 
@@ -24,16 +25,20 @@ function cloneAnnotations(annotations: ImageAnnotation[]) {
   return annotations.map((annotation) => ({ ...annotation, points: annotation.points.map((point) => ({ ...point })) }));
 }
 
-export default function ImageAnalysisModal({ uploadId, filename, imageUrl, processingMode, onClose }: ImageAnalysisModalProps) {
-  const [polygons, setPolygons] = useState<ImageAnnotation[]>([]);
-  const [baselinePolygons, setBaselinePolygons] = useState<ImageAnnotation[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+export default function ImageAnalysisModal({ uploadId, filename, imageUrl, processingMode, initialAnnotations, onClose }: ImageAnalysisModalProps) {
+  const initial = initialAnnotations?.length ? cloneAnnotations(initialAnnotations) : [];
+  const [polygons, setPolygons] = useState<ImageAnnotation[]>(initial);
+  const [baselinePolygons, setBaselinePolygons] = useState<ImageAnnotation[]>(cloneAnnotations(initial));
+  const [selectedId, setSelectedId] = useState<string | null>(initial[0]?.id ?? null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draggingVertex, setDraggingVertex] = useState<{ polygonId: string; pointIndex: number } | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [loadingAnnotations, setLoadingAnnotations] = useState(Boolean(uploadId));
+  const [loadingAnnotations, setLoadingAnnotations] = useState(Boolean(uploadId) && initial.length === 0);
+  const [imageLoaded, setImageLoaded] = useState(false);
   const [savingAnnotations, setSavingAnnotations] = useState(false);
-  const [persistenceMessage, setPersistenceMessage] = useState('');
+  const [persistenceMessage, setPersistenceMessage] = useState(initial.length > 0
+    ? `${initial.length} model polygon${initial.length === 1 ? '' : 's'} ready immediately.`
+    : '');
 
   useEffect(() => {
     let active = true;
@@ -62,7 +67,7 @@ export default function ImageAnalysisModal({ uploadId, filename, imageUrl, proce
       }
     })();
     return () => { active = false; };
-  }, [processingMode, uploadId]);
+  }, [initialAnnotations, processingMode, uploadId]);
 
   const selected = polygons.find((polygon) => polygon.id === selectedId) ?? null;
 
@@ -166,8 +171,13 @@ export default function ImageAnalysisModal({ uploadId, filename, imageUrl, proce
         <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_280px]">
           <div className="flex min-h-0 items-center justify-center overflow-auto bg-black/60 p-3 sm:p-5">
             <div className="relative inline-block max-h-full max-w-full overflow-hidden rounded-xl border border-slate-700 bg-black shadow-2xl">
+              {!imageLoaded && (
+                <div className="absolute inset-0 z-10 flex min-h-64 min-w-64 items-center justify-center bg-slate-950 text-sm text-slate-300">
+                  <Loader2 className="mr-2 h-5 w-5 animate-spin text-cyan-300" /> Decoding image…
+                </div>
+              )}
               {/* eslint-disable-next-line @next/next/no-img-element -- object URLs are created from local user uploads. */}
-              <img key={imageUrl} src={imageUrl} alt={`Uploaded imagery ${filename}`} className="block max-h-[72dvh] max-w-full select-none object-contain" draggable={false} />
+              <img key={imageUrl} src={imageUrl} alt={`Uploaded imagery ${filename}`} className="block max-h-[72dvh] max-w-full select-none object-contain" draggable={false} decoding="async" onLoad={() => setImageLoaded(true)} />
               <svg
                 viewBox="0 0 1000 1000"
                 preserveAspectRatio="none"
