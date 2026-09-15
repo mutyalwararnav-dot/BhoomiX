@@ -36,7 +36,10 @@ const ACCEPTED_TYPES = ['application/geo+json', 'application/json'];
 const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'tif', 'tiff'];
 const MAX_BYTES       = 25 * 1024 * 1024; // Keep browser-side JSON parsing bounded
 const FAST_LOCAL_UPLOAD_BYTES = 8 * 1024 * 1024;
-const ANALYSIS_PREVIEW_EDGE = 1800;
+// The modal displays the image below 1,000 CSS pixels on most screens. A
+// 1,280px preview stays sharp while decoding and painting much faster than the
+// original multi-megapixel upload.
+const ANALYSIS_PREVIEW_EDGE = 1280;
 
 async function createAnalysisPreviewUrl(file: File) {
   if (!['image/jpeg', 'image/png'].includes(file.type) || typeof createImageBitmap !== 'function') return null;
@@ -51,7 +54,7 @@ async function createAnalysisPreviewUrl(file: File) {
     const context = canvas.getContext('2d', { alpha: false });
     if (!context) return null;
     context.drawImage(bitmap, 0, 0, width, height);
-    const preview = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.86));
+    const preview = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.80));
     return preview ? URL.createObjectURL(preview) : null;
   } finally {
     bitmap.close();

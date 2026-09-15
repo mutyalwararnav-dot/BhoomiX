@@ -1,7 +1,7 @@
 'use client';
 
 import { Check, Edit3, ImageIcon, Loader2, MessageSquareText, Plus, RotateCcw, Save, Send, ShieldAlert, X, XCircle } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '@/lib/api-fetch';
 import type { ImageAnnotation, ImageAnnotationPoint, ImageAnnotationStatus } from '@/lib/image-annotations';
 
@@ -74,7 +74,10 @@ export default function ImageAnalysisModal({ uploadId, filename, imageUrl, proce
 
   useEffect(() => {
     let active = true;
-    if (!uploadId) return;
+    // Fresh inference already returns the complete annotations with the upload
+    // response. Do not immediately download the same JSON from Supabase again.
+    // Stored jobs still use this request because they have no initial payload.
+    if (!uploadId || (initialAnnotations?.length ?? 0) > 0) return;
     void (async () => {
       try {
         const response = await apiFetch(`/api/imagery/${uploadId}/annotations`, { cache: 'no-store' });
@@ -102,6 +105,10 @@ export default function ImageAnalysisModal({ uploadId, filename, imageUrl, proce
   }, [initialAnnotations, processingMode, uploadId]);
 
   const selected = polygons.find((polygon) => polygon.id === selectedId) ?? null;
+  const renderedPolygons = useMemo(() => polygons.map((polygon) => ({
+    polygon,
+    pointsAttribute: polygon.points.map((point) => `${point.x},${point.y}`).join(' '),
+  })), [polygons]);
 
   const selectForEditing = (polygonId: string) => {
     const wasSimplified = (polygons.find((polygon) => polygon.id === polygonId)?.points.length ?? 0) > 6;
@@ -225,7 +232,7 @@ export default function ImageAnalysisModal({ uploadId, filename, imageUrl, proce
                 </div>
               )}
               {/* eslint-disable-next-line @next/next/no-img-element -- object URLs are created from local user uploads. */}
-              <img key={imageUrl} src={imageUrl} alt={`Uploaded imagery ${filename}`} className="block max-h-[72dvh] max-w-full select-none object-contain" draggable={false} decoding="async" onLoad={() => setImageLoaded(true)} />
+              <img key={imageUrl} src={imageUrl} alt={`Uploaded imagery ${filename}`} className="block max-h-[72dvh] max-w-full select-none object-contain" draggable={false} decoding="async" loading="eager" fetchPriority="high" onLoad={() => setImageLoaded(true)} />
               <svg
                 viewBox="0 0 1000 1000"
                 preserveAspectRatio="none"
@@ -235,15 +242,15 @@ export default function ImageAnalysisModal({ uploadId, filename, imageUrl, proce
                 onPointerCancel={() => setDraggingVertex(null)}
                 onPointerLeave={() => setDraggingVertex(null)}
               >
-                {polygons.map((polygon) => {
+                {renderedPolygons.map(({ polygon, pointsAttribute }) => {
                   const isSelected = polygon.id === selectedId;
                   const isEditing = polygon.id === editingId;
-                  const center = polygonCenter(polygon.points);
+                  const center = isSelected ? polygonCenter(polygon.points) : null;
                   const stroke = polygon.status === 'rejected' ? '#fb7185' : polygon.status === 'approved' ? '#34d399' : isSelected ? '#fbbf24' : '#22d3ee';
                   return (
                     <g key={polygon.id} onPointerDown={() => selectForEditing(polygon.id)} className="cursor-pointer">
-                      <polygon points={polygon.points.map((point) => `${point.x},${point.y}`).join(' ')} fill={stroke} fillOpacity={isSelected ? 0.28 : 0.16} stroke={stroke} strokeWidth={isSelected ? 5 : 3} vectorEffect="non-scaling-stroke" />
-                      {isSelected && <>
+                      <polygon points={pointsAttribute} fill={stroke} fillOpacity={isSelected ? 0.28 : 0.16} stroke={stroke} strokeWidth={isSelected ? 5 : 3} vectorEffect="non-scaling-stroke" />
+                      {isSelected && center && <>
                         <rect x={center.x - 54} y={center.y - 22} width="108" height="38" rx="8" fill="#020617" fillOpacity="0.88" />
                         <text x={center.x} y={center.y + 5} textAnchor="middle" fill="white" fontSize="24" fontWeight="700">{polygon.confidence === null ? 'MANUAL' : `${Math.round(polygon.confidence * 100)}%`}</text>
                       </>}
@@ -311,7 +318,7 @@ export default function ImageAnalysisModal({ uploadId, filename, imageUrl, proce
                 </div>
               )}
               {polygons.map((polygon) => (
-                <button key={polygon.id} type="button" onClick={() => selectForEditing(polygon.id)} className={`w-full rounded-xl border p-3 text-left transition ${polygon.id === selectedId ? 'border-indigo-400 bg-indigo-500/10' : 'border-slate-800 bg-slate-900/60 hover:border-slate-700'}`}>
+                <button key={polygon.id} type="button" onClick={() => selectForEditing(polygon.id)} style={{ contentVisibility: 'auto', containIntrinsicSize: '0 68px' }} className={`w-full rounded-xl border p-3 text-left transition ${polygon.id === selectedId ? 'border-indigo-400 bg-indigo-500/10' : 'border-slate-800 bg-slate-900/60 hover:border-slate-700'}`}>
                   <div className="flex items-center justify-between gap-2"><span className="font-mono text-xs font-semibold text-slate-200">{polygon.id}</span><span className="text-xs font-bold text-cyan-300">{polygon.confidence === null ? 'Manual' : `${Math.round(polygon.confidence * 100)}%`}</span></div>
                   <p className={`mt-1 text-[10px] font-bold uppercase tracking-wider ${polygon.status === 'approved' ? 'text-emerald-300' : polygon.status === 'rejected' ? 'text-rose-300' : 'text-amber-300'}`}>{polygon.status}</p>
                 </button>

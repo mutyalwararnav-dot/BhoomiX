@@ -7,7 +7,7 @@ export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const MAX_PREVIEW_EDGE = 1800;
+const MAX_PREVIEW_EDGE = 1280;
 const MAX_STORED_IMAGE_BYTES = 25 * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/tiff']);
 
@@ -57,7 +57,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const preview = await sharp(source, { limitInputPixels: 100_000_000 })
       .resize({ width: MAX_PREVIEW_EDGE, height: MAX_PREVIEW_EDGE, fit: 'inside', withoutEnlargement: true })
       .flatten({ background: '#ffffff' })
-      .jpeg({ quality: 84, mozjpeg: true })
+      .jpeg({ quality: 80, mozjpeg: true })
       .toBuffer();
 
     return new Response(new Uint8Array(preview), {

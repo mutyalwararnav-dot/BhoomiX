@@ -35,6 +35,9 @@ const REFERENCE_SOURCE_ID = 'bhoomix-reference-buildings';
 const REFERENCE_FILL_LAYER = 'reference-buildings-fill';
 const REFERENCE_STROKE_LAYER = 'reference-buildings-stroke';
 
+let cachedReferenceBuildings: GeoJSON.FeatureCollection<GeoJSON.Polygon> | null = null;
+let referenceBuildingsRequest: Promise<GeoJSON.FeatureCollection<GeoJSON.Polygon>> | null = null;
+
 interface ImageryFootprint {
   id: string;
   filename: string;
@@ -314,7 +317,7 @@ const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
     const [isLoading, setIsLoading] = useState(true);
     const [mapReady, setMapReady]   = useState(false);
     const [parcelPaths, setParcelPaths] = useState<RenderedParcelPath[]>([]);
-    const [referencePaths, setReferencePaths] = useState<RenderedParcelPath[]>([]);
+    const [referencePath, setReferencePath] = useState<string | null>(null);
     const [editPath, setEditPath] = useState<string | null>(null);
     const [basemapWarning, setBasemapWarning] = useState<string | null>(null);
     const [imageryCount, setImageryCount] = useState(0);
@@ -369,23 +372,31 @@ const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
     }, []);
 
     const fetchReferenceBuildings = useCallback(async (): Promise<GeoJSON.FeatureCollection<GeoJSON.Polygon>> => {
-      try {
-        const response = await fetch('/api/reference-buildings', { cache: 'no-store' });
-        const payload = await response.json() as {
-          geojson?: GeoJSON.FeatureCollection<GeoJSON.Polygon>;
-        };
-        if (!response.ok || payload.geojson?.type !== 'FeatureCollection' || !Array.isArray(payload.geojson.features)) {
+      if (cachedReferenceBuildings) return cachedReferenceBuildings;
+
+      if (!referenceBuildingsRequest) {
+        referenceBuildingsRequest = (async () => {
+          const response = await fetch('/api/reference-buildings', { cache: 'force-cache' });
+          const payload = await response.json() as {
+            geojson?: GeoJSON.FeatureCollection<GeoJSON.Polygon>;
+          };
+          if (!response.ok || payload.geojson?.type !== 'FeatureCollection' || !Array.isArray(payload.geojson.features)) {
+            throw new Error('Reference buildings could not be loaded.');
+          }
+          cachedReferenceBuildings = payload.geojson;
+          return payload.geojson;
+        })().catch(() => {
+          referenceBuildingsRequest = null;
           return { type: 'FeatureCollection', features: [] };
-        }
-        return payload.geojson;
-      } catch {
-        return { type: 'FeatureCollection', features: [] };
+        });
       }
+
+      return referenceBuildingsRequest;
     }, []);
 
     const refreshSvgOverlay = useCallback((map: maplibregl.Map) => {
       const nextPaths: RenderedParcelPath[] = [];
-      const nextReferencePaths: RenderedParcelPath[] = [];
+      const nextReferencePaths: string[] = [];
 
       parcelDataRef.current.features.forEach((feature, index) => {
         if (feature.geometry?.type !== 'Polygon') return;
@@ -404,21 +415,16 @@ const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
         }
       });
 
-      referenceBuildingsRef.current.features.forEach((feature, index) => {
+      referenceBuildingsRef.current.features.forEach((feature) => {
         try {
-          const ring = normalizeLinearRing(feature.geometry.coordinates[0]);
-          nextReferencePaths.push({
-            key: String(feature.id ?? `reference-${index}`),
-            path: ringToScreenPath(map, ring),
-            color: '#06B6D4',
-          });
+          nextReferencePaths.push(ringToScreenPath(map, normalizeLinearRing(feature.geometry.coordinates[0])));
         } catch {
           // Skip malformed third-party reference geometry.
         }
       });
 
       setParcelPaths(nextPaths);
-      setReferencePaths(nextReferencePaths);
+      setReferencePath(nextReferencePaths.length > 0 ? nextReferencePaths.join(' ') : null);
       setEditPath(currentCoordsRef.current
         ? ringToScreenPath(map, currentCoordsRef.current)
         : null);
@@ -437,6 +443,9 @@ const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
       setMapReady(false);
       setBasemapWarning(null);
 
+      // Start the large OSM request immediately so it runs in parallel with map setup.
+      const referenceBuildingsPromise = fetchReferenceBuildings();
+
       const map = new maplibregl.Map({
         container: mapContainer.current,
         style: createFallbackStyle(),
@@ -445,6 +454,17 @@ const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
       });
 
       mapRef.current = map;
+
+      void referenceBuildingsPromise.then((buildings) => {
+        if (cancelled || mapRef.current !== map) return;
+
+        referenceBuildingsRef.current = buildings;
+        setReferenceBuildingCount(buildings.features.length);
+        onReferenceBuildingCountChange?.(buildings.features.length);
+
+        if (!map.isStyleLoaded()) return;
+        ensureReferenceBuildingLayers(map, buildings);
+      });
 
       const handleMapError = (event: maplibregl.ErrorEvent) => {
         if (cancelled) return;
@@ -475,6 +495,7 @@ const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
         parcelDataRef.current = geojson;
         imageryRef.current = imagery;
         ensureBackgroundLayers(map, geojson);
+        ensureReferenceBuildingLayers(map, referenceBuildingsRef.current);
         ensureImageryLayers(map, imagery);
         ensureEditLayers(map);
         setImageryCount(imagery.length);
@@ -511,30 +532,22 @@ const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
         }
         map.remove();
       };
-    }, [fetchImagery, fetchParcels, refreshSvgOverlay]);
+    }, [fetchImagery, fetchParcels, fetchReferenceBuildings, onReferenceBuildingCountChange, refreshSvgOverlay]);
 
+    // Install and reveal references whether they finish before or after the map style.
     useEffect(() => {
-      if (!mapReady || !mapRef.current) return;
-      let cancelled = false;
       const map = mapRef.current;
+      if (!mapReady || !map || referenceBuildingCount === 0 || !map.getStyle()) return;
 
-      void fetchReferenceBuildings().then((buildings) => {
-        if (cancelled || mapRef.current !== map || !map.getStyle()) return;
-        referenceBuildingsRef.current = buildings;
-        setReferenceBuildingCount(buildings.features.length);
-        onReferenceBuildingCountChange?.(buildings.features.length);
-        ensureReferenceBuildingLayers(map, buildings);
-        refreshSvgOverlay(map);
-        if (buildings.features.length > 0 && parcelDataRef.current.features.length === 0) {
-          map.fitBounds(
-            [[73.853, 18.5175], [73.861, 18.5235]],
-            { padding: 64, duration: 800, maxZoom: 16 },
-          );
-        }
-      });
-
-      return () => { cancelled = true; };
-    }, [fetchReferenceBuildings, mapReady, onReferenceBuildingCountChange, refreshSvgOverlay]);
+      ensureReferenceBuildingLayers(map, referenceBuildingsRef.current);
+      if (parcelDataRef.current.features.length === 0) {
+        map.fitBounds(
+          [[73.853, 18.5175], [73.861, 18.5235]],
+          { padding: 64, duration: 0, maxZoom: 16 },
+        );
+      }
+      refreshSvgOverlay(map);
+    }, [mapReady, referenceBuildingCount, refreshSvgOverlay]);
 
     // 2. Refresh Background Data
     useEffect(() => {
@@ -571,12 +584,19 @@ const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
       }
     }, [elevationLayer, mapReady]);
 
-    // Keep the SVG fallback synchronized with MapLibre camera movement.
+    // Keep the lightweight combined reference path attached to the map while it moves.
     useEffect(() => {
       const map = mapRef.current;
       if (!map || !mapReady) return;
 
-      const refresh = () => refreshSvgOverlay(map);
+      let animationFrame: number | null = null;
+      const refresh = () => {
+        if (animationFrame !== null) return;
+        animationFrame = window.requestAnimationFrame(() => {
+          animationFrame = null;
+          refreshSvgOverlay(map);
+        });
+      };
       map.on('move', refresh);
       map.on('resize', refresh);
       refresh();
@@ -584,6 +604,7 @@ const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
       return () => {
         map.off('move', refresh);
         map.off('resize', refresh);
+        if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
       };
     }, [mapReady, refreshSvgOverlay]);
 
@@ -755,18 +776,17 @@ const WebGISMap = forwardRef<WebGISMapHandle, WebGISMapProps>(
           className="absolute inset-0 z-[2] w-full h-full pointer-events-none"
           aria-hidden="true"
         >
-          {referencePaths.map(referencePath => (
+          {referencePath && (
             <path
-              key={referencePath.key}
-              d={referencePath.path}
-              fill={referencePath.color}
+              d={referencePath}
+              fill="#22D3EE"
               fillOpacity="0.1"
-              stroke={referencePath.color}
+              stroke="#06B6D4"
               strokeOpacity="0.9"
               strokeWidth="1.25"
               vectorEffect="non-scaling-stroke"
             />
-          ))}
+          )}
 
           {parcelPaths.map(parcelPath => (
             <path

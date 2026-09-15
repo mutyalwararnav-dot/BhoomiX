@@ -10,6 +10,7 @@ const OVERPASS_ENDPOINTS = [
 const PUNE_PILOT_QUERY = '[out:json][timeout:15];way["building"](18.5175,73.853,18.5235,73.861);out geom qt;';
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const MAX_BUILDINGS = 5000;
+const RESPONSE_CACHE_HEADER = 'public, max-age=21600, stale-while-revalidate=86400';
 
 interface OverpassElement {
   type?: unknown;
@@ -78,7 +79,7 @@ async function requestBuildings(endpoint: string) {
     },
     body,
     cache: 'no-store',
-    signal: AbortSignal.timeout(25_000),
+    signal: AbortSignal.timeout(10_000),
   });
   if (!response.ok) throw new Error(`OpenStreetMap reference service returned HTTP ${response.status}.`);
 
@@ -101,7 +102,7 @@ export async function GET() {
   if (cachedBuildings && cachedBuildings.expiresAt > Date.now()) {
     return NextResponse.json(
       { geojson: cachedBuildings.geojson, count: cachedBuildings.geojson.features.length, source: 'OpenStreetMap' },
-      { headers: { 'Cache-Control': 'public, max-age=3600, stale-while-revalidate=21600' } },
+      { headers: { 'Cache-Control': RESPONSE_CACHE_HEADER } },
     );
   }
 
@@ -113,7 +114,7 @@ export async function GET() {
       cachedBuildings = { geojson, expiresAt: Date.now() + CACHE_TTL_MS };
       return NextResponse.json(
         { geojson, count: geojson.features.length, source: 'OpenStreetMap' },
-        { headers: { 'Cache-Control': 'public, max-age=3600, stale-while-revalidate=21600' } },
+        { headers: { 'Cache-Control': RESPONSE_CACHE_HEADER } },
       );
     } catch (error: unknown) {
       lastError = error instanceof Error ? error.message : lastError;
